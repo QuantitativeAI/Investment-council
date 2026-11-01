@@ -1,4 +1,4 @@
-# Multi-Agent Roundtable Meeting System
+# Multi-expert investment council
 
 [中文版](#中文说明) | [English](#english)
 
@@ -8,7 +8,7 @@
 
 ### Overview
 
-A multi-agent roundtable discussion system where multiple AI experts debate a given topic through structured rounds, guided by a moderator/arbiter. The system simulates a real expert panel meeting:
+Multi-expert investment council discussion system where multiple AI financial experts debate a given investment idea through structured rounds, guided by a moderator/arbiter. The system simulates a real expert panel meeting:
 
 1. **User** submits a topic
 2. **Moderator** opens the meeting, states rules and objectives
