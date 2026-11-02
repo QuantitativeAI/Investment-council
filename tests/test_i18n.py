@@ -1,22 +1,16 @@
-from i18n import is_chinese, t, get_default_experts
+from i18n import LANG_FOLLOW_INSTRUCTION, DEFAULT_EXPERTS
 
 
-def test_is_chinese_detects_cjk():
-    assert is_chinese("如何设计系统？") is True
-    assert is_chinese("How to design a system?") is False
-    assert is_chinese("混合 mixed text 测试") is True
-    assert is_chinese("") is False
+def test_lang_follow_instruction_is_language_agnostic():
+    assert "language of the user's topic" in LANG_FOLLOW_INSTRUCTION
+    # No per-language branching: the instruction works for any topic language.
+    assert "If the topic is in English" not in LANG_FOLLOW_INSTRUCTION
+    assert "If the topic is in Chinese" not in LANG_FOLLOW_INSTRUCTION
 
 
-def test_t_selects_correct_language():
-    assert t("中文议题", "你好", "hello") == "你好"
-    assert t("English topic", "你好", "hello") == "hello"
-
-
-def test_get_default_experts_returns_correct_language():
-    zh_experts = get_default_experts("如何提高代码质量？")
-    en_experts = get_default_experts("How to improve code quality?")
-
-    assert zh_experts[0]["name"] == "创新专家"
-    assert en_experts[0]["name"] == "Innovation Expert"
-    assert len(zh_experts) == len(en_experts) == 4
+def test_default_experts_are_english():
+    assert DEFAULT_EXPERTS[0]["name"] == "Innovation Expert"
+    assert len(DEFAULT_EXPERTS) == 4
+    for expert in DEFAULT_EXPERTS:
+        assert "name" in expert
+        assert "role_label" in expert

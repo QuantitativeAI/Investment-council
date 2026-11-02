@@ -17,8 +17,6 @@ from typing import Any, Optional
 
 import httpx
 
-from i18n import pick
-
 logger = logging.getLogger(__name__)
 
 TAVILY_API_URL = "https://api.tavily.com/search"
@@ -149,9 +147,9 @@ def _get_recent_api_url(url: str) -> str:
     return url.rstrip("/") + "/recent"
 
 
-def _normalize_recent_result(item: dict[str, Any], lang: str = "en") -> dict[str, Any]:
+def _normalize_recent_result(item: dict[str, Any]) -> dict[str, Any]:
     return {
-        "title": item.get("title", pick(lang, "无标题", "Untitled")),
+        "title": item.get("title", "Untitled"),
         "url": item.get("link", ""),
         "content": item.get("summary", ""),
         "score": item.get("score", 0.0),
@@ -221,18 +219,18 @@ def _extract_html_text(html: str) -> tuple[str, str]:
     return title, text
 
 
-def _format_search_response(results: list[dict[str, Any]], answer: str = "", lang: str = "en") -> dict:
+def _format_search_response(results: list[dict[str, Any]], answer: str = "") -> dict:
     lines = []
     if answer:
-        lines.append(f"## {pick(lang, '搜索摘要', 'Search Summary')}\n{answer}\n")
-    lines.append(f"## {pick(lang, f'搜索结果 (共 {len(results)} 条)', f'Search Results ({len(results)} total)')}\n")
+        lines.append(f"## Search Summary\n{answer}\n")
+    lines.append(f"## Search Results ({len(results)} total)\n")
     for i, result in enumerate(results, 1):
-        title = result.get("title", pick(lang, "无标题", "Untitled"))
+        title = result.get("title", "Untitled")
         result_url = result.get("url", "")
         content = result.get("content", "")
         lines.append(f"### {i}. {title}")
         if result_url:
-            lines.append(f"{pick(lang, '来源: ', 'Source: ')}{result_url}")
+            lines.append(f"Source: {result_url}")
         if content:
             lines.append(content)
         lines.append("")
@@ -245,12 +243,12 @@ def _format_search_response(results: list[dict[str, Any]], answer: str = "", lan
     }
 
 
-def _format_fetch_response(url: str, title: str, content: str, lang: str = "en") -> dict:
+def _format_fetch_response(url: str, title: str, content: str) -> dict:
     display_title = title or url
     summary = "\n".join([
-        pick(lang, "## 网页获取结果", "## Webpage Fetch Result"),
-        f"{pick(lang, '标题: ', 'Title: ')}{display_title}",
-        f"{pick(lang, '来源: ', 'Source: ')}{url}",
+        "## Webpage Fetch Result",
+        f"Title: {display_title}",
+        f"Source: {url}",
         "",
         content,
     ])
@@ -267,7 +265,6 @@ async def browse_recent_news(
     category: Optional[str] = None,
     source: Optional[str] = None,
     days: int = 3,
-    lang: str = "en",
 ) -> dict:
     """Browse latest news from the local News API via /recent."""
     url = get_search_api_url()
@@ -289,8 +286,8 @@ async def browse_recent_news(
         resp.raise_for_status()
         data = resp.json()
 
-    results = [_normalize_recent_result(item, lang) for item in data.get("results", [])]
-    return _format_search_response(results, lang=lang)
+    results = [_normalize_recent_result(item) for item in data.get("results", [])]
+    return _format_search_response(results)
 
 
 async def web_search(
@@ -302,7 +299,6 @@ async def web_search(
     exclude_domains: Optional[list[str]] = None,
     api_key: Optional[str] = None,
     days: int = 7,
-    lang: str = "en",
 ) -> dict:
     """Search the open web via Tavily or another generic web-search backend."""
     url = get_web_search_api_url()
@@ -337,10 +333,10 @@ async def web_search(
         resp.raise_for_status()
         data = resp.json()
 
-    return _format_search_response(data.get("results", []), data.get("answer", ""), lang)
+    return _format_search_response(data.get("results", []), data.get("answer", ""))
 
 
-async def fetch_webpage_content(url: str, max_chars: int = 12000, lang: str = "en") -> dict:
+async def fetch_webpage_content(url: str, max_chars: int = 12000) -> dict:
     """Fetch a webpage directly and extract readable text content."""
     target_url = url.strip()
     if not target_url:
@@ -362,7 +358,7 @@ async def fetch_webpage_content(url: str, max_chars: int = 12000, lang: str = "e
     cleaned = re.sub(r"\n{3,}", "\n\n", extracted).strip()
     if max_chars > 0:
         cleaned = cleaned[:max_chars]
-    return _format_fetch_response(target_url, title, cleaned, lang)
+    return _format_fetch_response(target_url, title, cleaned)
 
 
 async def tavily_search(
@@ -374,7 +370,6 @@ async def tavily_search(
     api_key: Optional[str] = None,
     category: Optional[str] = None,
     source: Optional[str] = None,
-    lang: str = "en",
 ) -> dict:
     """Search using Tavily-compatible API.
 
@@ -402,7 +397,6 @@ async def tavily_search(
             category=category,
             source=source,
             days=days,
-            lang=lang,
         )
 
     payload = {
@@ -432,7 +426,7 @@ async def tavily_search(
     results = data.get("results", [])
     answer = data.get("answer", "")
 
-    return _format_search_response(results, answer, lang)
+    return _format_search_response(results, answer)
     
 async def search_for_topic(topic: str, api_key: Optional[str] = None) -> str:
     """Convenience function: search for a topic and return a formatted background string."""
