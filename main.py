@@ -8,7 +8,8 @@ from config import load_config
 from models import MeetingInput
 from agents import ModeratorAgent, ExpertAgent
 from meeting import RoundtableMeeting
-from i18n import DEFAULT_EXPERTS, LANG_FOLLOW_INSTRUCTION
+from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
+from agent_defs import build_expert_agents
 from skills.web_search import execute as skill_web_search, is_available as skill_search_available
 
 logging.basicConfig(
@@ -85,11 +86,11 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
     last_feedback: str | None = None
     keyword_searches = 0
 
-    print("🔍 Moderator is researching background information...")
+    print(f"🔍 The {MODERATOR_DISPLAY_NAME} is researching background information...")
 
     for i in range(max_searches):
         prompt = (
-            f"You are the moderator of a roundtable meeting. You need to search a news database for background information on the upcoming topic.\n\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting. You need to search a news database for background information on the upcoming topic.\n\n"
             f"Topic: {topic}\n"
         )
         if background:
@@ -125,7 +126,7 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
             break
 
         if not query or query.upper() == "DONE":
-            print("🔍 Moderator determined information is sufficient.")
+            print(f"🔍 The {MODERATOR_DISPLAY_NAME} determined information is sufficient.")
             break
 
         command = parse_research_command(query)
@@ -140,7 +141,7 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
             print(f"🔍 {last_feedback}")
             continue
         if command_key in seen_commands:
-            print(f"🔍 Moderator repeated the same command: {query}. Stopping to avoid fetching the same news repeatedly.")
+            print(f"🔍 The {MODERATOR_DISPLAY_NAME} repeated the same command: {query}. Stopping to avoid fetching the same news repeatedly.")
             break
 
         searched_queries.append(query)
@@ -251,16 +252,18 @@ async def run_meeting(
     # Moderator uses its own dedicated LLM
     moderator = ModeratorAgent(provider=config.moderator_llm)
 
-    # Each expert gets a provider selected by weight
-    configs = expert_configs or DEFAULT_EXPERTS
-    experts = [
-        ExpertAgent(
-            name=cfg["name"],
-            role_label=cfg["role_label"],
-            provider=config.select_expert_provider(),
-        )
-        for cfg in configs
-    ]
+    # Experts: explicit override > markdown definitions in agents/ > built-in defaults
+    if expert_configs:
+        experts = [
+            ExpertAgent(
+                name=cfg["name"],
+                role_label=cfg["role_label"],
+                provider=config.select_expert_provider(),
+            )
+            for cfg in expert_configs
+        ]
+    else:
+        experts = build_expert_agents(config)
 
     # Enable search skill on experts if search is enabled and available
     if search_enabled and skill_search_available():
@@ -389,7 +392,7 @@ def _interactive_chat(meeting_report: str, env_path: str | None = None):
     import httpx
 
     print("\n" + "=" * 60)
-    print("Meeting complete. You can now chat with the moderator.")
+    print("Meeting complete. You can now chat with the Committee Chair.")
     print("Type 'quit' or 'exit' to end. Press Ctrl+C to abort.")
     print("=" * 60 + "\n")
 
@@ -402,7 +405,7 @@ def _interactive_chat(meeting_report: str, env_path: str | None = None):
     client = OpenAI(**kwargs)
 
     system_prompt = (
-        "You are the moderator of a roundtable meeting that just ended. Below is the full meeting report.\n"
+        f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting that just ended. Below is the full meeting report.\n"
         "The user has follow-up questions about the meeting. Answer based on the report.\n"
         "Stay neutral, accurate, and concise. If the user asks about something not discussed, say so.\n\n"
         + f"=== Meeting Report ===\n{meeting_report}\n=== End of Report ==="
@@ -433,7 +436,7 @@ def _interactive_chat(meeting_report: str, env_path: str | None = None):
             )
             reply = resp.choices[0].message.content or ""
             chat_history.append({"role": "assistant", "content": reply})
-            print(f"\nModerator: {reply}\n")
+            print(f"\nCommittee Chair: {reply}\n")
         except Exception as e:
             print(f"\nError: {e}\n")
             chat_history.pop()  # Remove the failed user message

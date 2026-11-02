@@ -8,24 +8,25 @@
 
 ### Overview
 
-A multi-agent roundtable discussion system where multiple AI experts debate a given topic through structured rounds, guided by a moderator/arbiter. The system simulates a real expert panel meeting:
+A multi-agent roundtable discussion system where multiple AI experts debate a given topic through structured rounds, guided by a neutral **Committee Chair**. The system simulates a real expert panel meeting:
 
 1. **User** submits a topic
-2. **Moderator** opens the meeting, states rules and objectives
+2. **Committee Chair** opens the meeting, states rules and objectives
 3. **Experts** (3-6 AI agents) independently present initial views (Round 1)
 4. Experts challenge each other's points and introduce new ideas (Round 2)
 5. Experts defend, revise, and converge (Round 3)
 6. Optional Round 4 for unresolved key issues
-7. **Moderator** produces a final report with consensus, disagreements, recommendations, and scores
+7. **Committee Chair** produces a final report with consensus, disagreements, recommendations, and scores
 
 ### Features
 
 - **Multi-provider LLM support** — configure multiple OpenAI-compatible providers with weighted selection
-- **Separate moderator LLM** — the arbiter can use a different model from the experts
+- **Separate Chair LLM** — the Committee Chair can use a different model from the experts
 - **Web UI** — WeChat-style group chat interface with real-time WebSocket streaming (port 3088)
 - **CLI mode** — run meetings from the command line, suitable for automation and agent-to-agent interaction
 - **Web search** — optional Tavily search integration for background research before the meeting
-- **Post-meeting chat** — after the meeting ends, continue chatting with the moderator about the results
+- **Post-meeting chat** — after the meeting ends, continue chatting with the Committee Chair about the results
+- **Custom markdown agents** — define your own council of experts as markdown files in `agents/`
 - **Bilingual UI** — English / Chinese toggle
 - **Session persistence** — chat history saved in browser localStorage
 
@@ -54,7 +55,7 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
    Then edit `.env` with your API keys.
 
    Required configuration:
-   - `MODERATOR_LLM_*` — at least one moderator LLM (API key, base URL, model)
+   - `MODERATOR_LLM_*` — at least one Committee Chair LLM (API key, base URL, model)
    - `LLM_PROVIDER_1_*` — at least one expert LLM provider
    - `SEARCH_API_URL` — (optional) local Tavily-compatible news service for recent structured news
    - `TAVILY_API_KEY` — (optional) open-web search for Eastmoney/Xueqiu/Sina/announcements/research
@@ -90,7 +91,7 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 
 | Variable | Description |
 | --- | --- |
-| `MODERATOR_LLM_NAME` | Moderator provider name |
+| `MODERATOR_LLM_NAME` | Committee Chair provider name |
 | `MODERATOR_LLM_BASE_URL` | OpenAI-compatible API base URL |
 | `MODERATOR_LLM_API_KEY` | API key |
 | `MODERATOR_LLM_MODEL` | Model name |
@@ -104,6 +105,28 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 | `SEARCH_API_URL` | Tavily-compatible local news API URL |
 | `TAVILY_API_KEY` | Tavily API key for open-web search |
 | `WEB_SEARCH_API_URL` | Optional Tavily-compatible open-web search API URL |
+| `AGENTS_DIR` | Optional directory of markdown agent definitions (default: `./agents`) |
+
+### Custom Agents (Markdown)
+
+The default council (Portfolio Manager, Earnings Reviewer, Business Analyst, Data Researcher) is defined as markdown files in the `agents/` directory — one file per agent. Each file has YAML frontmatter plus a markdown body that becomes the agent's full system prompt:
+
+```markdown
+---
+ame: Portfolio Manager
+description: One-line role description shown to the Committee Chair
+temperature: 0.45          # optional, default 0.7
+---
+You are the Head Portfolio Manager on an investment roundtable...
+(full persona — constraints, workflow, output expectations)
+```
+
+- `name` — display name (defaults to the file name if omitted)
+- `description` — shown to the Committee Chair in the opening so it knows each expert's remit
+- `temperature` — per-agent sampling temperature (optional)
+- Other frontmatter fields (e.g. opencode's `mode`, `tools`, `steps`, `model`) are ignored
+
+Markdown-defined agents keep their **fixed identities**: the Committee Chair introduces them by name and does not re-title them per topic. If the agents directory is missing or empty, the built-in generic experts are used instead. To use a different set, set `AGENTS_DIR` to any directory of markdown agent files.
 
 ### Project Structure
 
@@ -111,6 +134,8 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 ├── main.py                 # CLI entry point
 ├── web_server.py           # FastAPI web server (port 3088)
 ├── config.py               # .env configuration loader
+├── agent_defs.py           # Markdown agent definition loader
+├── agents/                 # Council agent definitions (markdown, one per expert)
 ├── models.py               # Data structures
 ├── agents.py               # Expert and Moderator agent classes
 ├── meeting.py              # Meeting orchestrator (CLI)
@@ -131,24 +156,25 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 
 ### 概述
 
-一个多Agent圆桌讨论系统，多个AI专家围绕给定议题进行结构化多轮辩论，由仲裁者引导。系统模拟真实的专家圆桌会议：
+一个多Agent圆桌讨论系统，多个AI专家围绕给定议题进行结构化多轮辩论，由中立的**委员会主席（Committee Chair）**引导。系统模拟真实的专家圆桌会议：
 
 1. **用户** 提出议题
-2. **仲裁者** 开场，声明规则和目标
+2. **委员会主席** 开场，声明规则和目标
 3. **专家** (3-6个AI Agent) 独立陈述初始观点（第一轮）
 4. 专家互相质疑、引入新观点（第二轮）
 5. 专家辩护、修正、收敛（第三轮）
 6. 可选第四轮补充关键未解问题
-7. **仲裁者** 产出最终报告，包含共识、分歧、推荐方案和评分
+7. **委员会主席** 产出最终报告，包含共识、分歧、推荐方案和评分
 
 ### 功能特性
 
 - **多LLM提供商** — 支持多个OpenAI兼容的LLM服务商，按权重随机选择
-- **独立仲裁者LLM** — 仲裁者可以使用与专家不同的模型
+- **独立主席LLM** — 委员会主席可以使用与专家不同的模型
 - **Web界面** — 微信风格群聊界面，WebSocket实时推送（端口3088）
 - **命令行模式** — 通过CLI运行会议，适合自动化和Agent间交互
 - **联网搜索** — 可选的Tavily搜索，会议前自动获取背景信息
-- **会后对话** — 会议结束后可继续与仲裁者对话讨论结果
+- **会后对话** — 会议结束后可继续与委员会主席对话讨论结果
+- **自定义Markdown专家** — 在 `agents/` 目录中用markdown文件定义自己的专家团
 - **中英双语** — 界面支持中英文切换
 - **会话持久化** — 聊天记录保存在浏览器localStorage
 
@@ -177,7 +203,7 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
    然后编辑 `.env` 填入你的 API 密钥。
 
    必须配置：
-   - `MODERATOR_LLM_*` — 至少一个仲裁者LLM（API密钥、地址、模型）
+   - `MODERATOR_LLM_*` — 至少一个委员会主席LLM（API密钥、地址、模型）
    - `LLM_PROVIDER_1_*` — 至少一个专家LLM提供商
    - `TAVILY_API_KEY` — （可选）用于联网搜索功能
    - `SEARCH_API_URL` — （可选）使用本地 Tavily 兼容搜索服务替代 Tavily
@@ -212,7 +238,7 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 
 | 变量名 | 说明 |
 | --- | --- |
-| `MODERATOR_LLM_NAME` | 仲裁者提供商名称 |
+| `MODERATOR_LLM_NAME` | 委员会主席提供商名称 |
 | `MODERATOR_LLM_BASE_URL` | OpenAI兼容API地址 |
 | `MODERATOR_LLM_API_KEY` | API密钥 |
 | `MODERATOR_LLM_MODEL` | 模型名称 |
@@ -225,6 +251,18 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 | `LLM_PROVIDER_N_TIMEOUT` | 请求超时（秒，默认300） |
 | `SEARCH_API_URL` | Tavily兼容的搜索API地址（如本地新闻服务） |
 | `TAVILY_API_KEY` | Tavily搜索API密钥（免费注册: <https://tavily.com>） |
+| `AGENTS_DIR` | 可选的markdown专家定义目录（默认 `./agents`） |
+
+### 自定义专家（Markdown）
+
+默认专家团（Portfolio Manager、Earnings Reviewer、Business Analyst、Data Researcher）以markdown文件形式定义在 `agents/` 目录中，一个文件一个专家。文件由YAML frontmatter和markdown正文组成，正文即该专家的完整系统提示词：
+
+- `name` — 显示名称（缺省时使用文件名）
+- `description` — 开场时展示给仲裁者，说明该专家的职责
+- `temperature` — 该专家的采样温度（可选，默认0.7）
+- 其他frontmatter字段（如opencode的 `mode`、`tools`、`steps`、`model`）会被忽略
+
+markdown定义的专家保持**固定身份**：仲裁者按其原名介绍，不会按议题重新命名。若 `agents/` 目录不存在或为空，则使用内置的通用专家。可通过 `AGENTS_DIR` 指向其他目录使用不同的专家组合。
 
 ### 项目结构
 
@@ -232,6 +270,8 @@ A multi-agent roundtable discussion system where multiple AI experts debate a gi
 ├── main.py                 # 命令行入口
 ├── web_server.py           # FastAPI Web服务（端口3088）
 ├── config.py               # .env 配置加载器
+├── agent_defs.py           # Markdown专家定义加载器
+├── agents/                 # 专家团定义（markdown，每个专家一个文件）
 ├── models.py               # 数据结构
 ├── agents.py               # 专家和仲裁者Agent类
 ├── meeting.py              # 会议编排器（CLI用）
