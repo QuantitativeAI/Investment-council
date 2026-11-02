@@ -33,7 +33,7 @@ def test_build_expert_specs_uses_base_roles_and_styles():
         ExpertAgent("工程专家", "工程型（偏落地实现）", _provider()),
     ]
 
-    specs = _build_expert_specs(experts, "测试议题")
+    specs = _build_expert_specs(experts)
 
-    assert "创新专家（创新型（偏提出新想法））" in specs
-    assert "工程专家（工程型（偏落地实现））" in specs
+    assert "创新专家 (创新型（偏提出新想法）)" in specs
+    assert "工程专家 (工程型（偏落地实现）)" in specs

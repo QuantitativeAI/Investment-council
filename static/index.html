@@ -470,10 +470,10 @@ let activeSessionId = null;
 let searchDefaultEnabled = localStorage.getItem('rt_search_default') === '1';
 const AGENT_COLORS = {
   'Moderator': '#e67e22',
-  '创新专家': '#3498db',
-  '审慎专家': '#e74c3c',
-  '工程专家': '#2ecc71',
-  '领域专家': '#9b59b6',
+  'Innovation Expert': '#3498db',
+  'Critical Expert': '#e74c3c',
+  'Engineering Expert': '#2ecc71',
+  'Domain Expert': '#9b59b6',
 };
 function getAgentColor(name) {
   if (AGENT_COLORS[name]) return AGENT_COLORS[name];
