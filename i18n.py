@@ -7,6 +7,12 @@ language that is (English, Chinese, French, ...).
 """
 
 # ---------------------------------------------------------------------------
+# Display name of the meeting's neutral process role (the chair/arbiter).
+# Single source of truth for user-facing and prompt text.
+# ---------------------------------------------------------------------------
+MODERATOR_DISPLAY_NAME = "Committee Chair"
+
+# ---------------------------------------------------------------------------
 # Instruction appended to every LLM prompt so the model follows the topic
 # language, regardless of what that language is.
 # ---------------------------------------------------------------------------

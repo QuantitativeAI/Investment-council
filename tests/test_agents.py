@@ -8,6 +8,7 @@ from agents import (
     MAX_AGENT_SEARCHES,
 )
 from config import LLMProviderConfig
+from i18n import LANG_FOLLOW_INSTRUCTION
 
 
 def _provider() -> LLMProviderConfig:
@@ -90,3 +91,27 @@ async def test_expert_can_use_web_search_and_fetch_backends():
     assert result.search_info is not None
     assert result.search_info[0]["query"] == "WEB:鹏鼎控股 世运电路 东方财富"
     assert result.search_info[1]["query"] == "FETCH:https://example.com/report"
+
+
+def test_expert_with_full_system_prompt_keeps_persona_verbatim():
+    persona = "You are the Head Portfolio Manager on an investment roundtable."
+    expert = ExpertAgent(
+        "Portfolio Manager",
+        "Head portfolio manager",
+        _provider(),
+        system_prompt=persona,
+        temperature=0.45,
+        allow_retitle=False,
+    )
+
+    assert expert.system_prompt == persona + LANG_FOLLOW_INSTRUCTION
+    assert expert.temperature == 0.45
+    assert expert.allow_retitle is False
+
+
+def test_expert_without_full_system_prompt_uses_generic_template():
+    expert = ExpertAgent("Innovation Expert", "Innovative (generates new ideas)", _provider())
+
+    assert "[Innovation Expert]" in expert.system_prompt
+    assert expert.allow_retitle is True
+    assert expert.temperature == 0.7

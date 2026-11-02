@@ -11,9 +11,10 @@ from fastapi.responses import HTMLResponse
 
 from config import MeetingConfig, load_config
 from models import MeetingInput
-from agents import ModeratorAgent, ExpertAgent
+from agents import ModeratorAgent
 from meeting_streaming import StreamingMeeting
-from i18n import DEFAULT_EXPERTS, LANG_FOLLOW_INSTRUCTION
+from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
+from agent_defs import build_expert_agents
 from search import (
     fetch_webpage_content,
     get_search_api_url,
@@ -179,12 +180,12 @@ async def _research_phase(
     last_feedback: str | None = None
     keyword_searches = 0
 
-    await send_event({"type": "system", "content": "🔍 Moderator is searching for background information..."})
+    await send_event({"type": "system", "content": f"🔍 The {MODERATOR_DISPLAY_NAME} is searching for background information..."})
 
     for i in range(MAX_SEARCH_ROUNDS):
-        # Ask moderator to generate a search query
+        # Ask the chair to generate a search query
         prompt = (
-            f"You are the moderator of a roundtable meeting. You need to search a news database for background information on the upcoming topic.\n\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting. You need to search a news database for background information on the upcoming topic.\n\n"
             f"Topic: {topic}\n"
         )
         if existing_background:
@@ -221,7 +222,7 @@ async def _research_phase(
             break
 
         if not query or query.upper() == "DONE":
-            await send_event({"type": "system", "content": "🔍 Moderator determined information is sufficient."})
+            await send_event({"type": "system", "content": f"🔍 The {MODERATOR_DISPLAY_NAME} determined information is sufficient."})
             break
 
         command = parse_research_command(query)
@@ -236,7 +237,7 @@ async def _research_phase(
             await send_event({"type": "system", "content": f"🔍 {last_feedback}"})
             continue
         if command_key in seen_commands:
-            await send_event({"type": "system", "content": f"🔍 Moderator repeated the same command: {query}. Stopping to avoid fetching the same news repeatedly."})
+            await send_event({"type": "system", "content": f"🔍 The {MODERATOR_DISPLAY_NAME} repeated the same command: {query}. Stopping to avoid fetching the same news repeatedly."})
             break
 
         searched_queries.append(query)
@@ -340,14 +341,8 @@ async def _run_meeting_task(
 
         moderator = ModeratorAgent(provider=config.moderator_llm)
 
-        experts = [
-            ExpertAgent(
-                name=cfg["name"],
-                role_label=cfg["role_label"],
-                provider=config.select_expert_provider(),
-            )
-            for cfg in DEFAULT_EXPERTS
-        ]
+        # Experts come from markdown definitions in agents/ (or built-in defaults)
+        experts = build_expert_agents(config)
 
         # Enable search skill on experts if a search backend is configured
         if search_enabled and skill_search_available():
@@ -400,7 +395,7 @@ async def _chat_with_moderator(
         )
 
         system_prompt = (
-            "You are the moderator of a roundtable meeting that just ended. Below is the full meeting transcript.\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting that just ended. Below is the full meeting transcript.\n"
             "The user has follow-up questions about the meeting. Answer based on the transcript.\n"
             "Stay neutral, accurate, and concise. If the user asks about something not discussed, say so.\n\n"
             + f"=== Meeting Record ===\n{meeting_history}\n=== End of Record ==="
@@ -415,7 +410,7 @@ async def _chat_with_moderator(
 
         messages = [{"role": "system", "content": system_prompt}] + _chat_histories[session_id]
 
-        await send_event({"type": "agent_start", "agent": "Moderator", "role": "Arbiter", "round": "chat"})
+        await send_event({"type": "agent_start", "agent": MODERATOR_DISPLAY_NAME, "role": "Arbiter", "round": "chat"})
 
         resp = await client.chat.completions.create(
             model=config.moderator_llm.model,
@@ -428,7 +423,7 @@ async def _chat_with_moderator(
 
         await send_event({
             "type": "agent_message",
-            "agent": "Moderator",
+            "agent": MODERATOR_DISPLAY_NAME,
             "role": "Arbiter",
             "round": "chat",
             "content": reply,

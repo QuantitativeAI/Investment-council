@@ -396,7 +396,7 @@ const T = {
     welcomeDesc: 'Click "+ New" to start a roundtable discussion',
     newSessionTitle: 'New Meeting',
     placeholderTopic: 'Enter discussion topic...',
-    placeholderChat: 'Ask the moderator...',
+    placeholderChat: 'Ask the Committee Chair...',
     send: 'Send',
     stop: '⏹ Stop',
     searchLabel: '🔍 Web Search',
@@ -411,8 +411,8 @@ const T = {
     searchResults: 'Web Search Results',
     meetingStarting: 'Meeting starting, preparing...',
     userAvatar: 'Me',
-    moderatorInitial: 'M',
-    searchTooltip: 'When enabled, the moderator will auto-search for background info before the meeting',
+    moderatorInitial: 'C',
+    searchTooltip: 'When enabled, the Committee Chair will auto-search for background info before the meeting',
     connError: 'Connection failed. Please check the server.',
   },
   zh: {
@@ -422,7 +422,7 @@ const T = {
     welcomeDesc: '点击「+ 新会议」开始一场圆桌讨论',
     newSessionTitle: '新会议',
     placeholderTopic: '输入讨论议题...',
-    placeholderChat: '向仲裁者提问...',
+    placeholderChat: '向委员会主席提问...',
     send: '发送',
     stop: '⏹ 停止',
     searchLabel: '🔍 联网搜索',
@@ -438,7 +438,7 @@ const T = {
     meetingStarting: '会议开始，正在准备...',
     userAvatar: '我',
     moderatorInitial: '主',
-    searchTooltip: '启用后，仲裁者将在会议前自动搜索相关背景信息',
+    searchTooltip: '启用后，委员会主席将在会议前自动搜索相关背景信息',
     connError: '连接失败，请检查服务器。',
   },
 };
@@ -469,7 +469,7 @@ const sessions = {};      // id -> { title, ws, messages: [], running, meetingDo
 let activeSessionId = null;
 let searchDefaultEnabled = localStorage.getItem('rt_search_default') === '1';
 const AGENT_COLORS = {
-  'Moderator': '#e67e22',
+  'Committee Chair': '#e67e22',
   'Innovation Expert': '#3498db',
   'Critical Expert': '#e74c3c',
   'Engineering Expert': '#2ecc71',
@@ -482,7 +482,7 @@ function getAgentColor(name) {
   return `hsl(${h % 360}, 55%, 50%)`;
 }
 function getAgentInitial(name) {
-  if (name === 'Moderator') return t('moderatorInitial');
+  if (name === 'Committee Chair') return t('moderatorInitial');
   return name.charAt(0);
 }
 
@@ -747,7 +747,7 @@ function createMsgElement(msg) {
   }
 
   if (msg.type === 'agent_message' || msg.type === 'moderator_summary' || msg.type === 'final_report' || msg.type === 'agent_error') {
-    const isMod = msg.agent === 'Moderator';
+    const isMod = msg.agent === 'Committee Chair';
     const isFinal = msg.type === 'final_report';
     const isError = msg.type === 'agent_error';
     let cls = 'msg';

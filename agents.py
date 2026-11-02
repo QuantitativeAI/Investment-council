@@ -10,9 +10,9 @@ from openai import AsyncOpenAI
 from config import LLMProviderConfig
 from models import AgentMessage, RoundScore, RoundSummary, FinalReport, FinalScore
 from parser import parse_json_response, safe_parse_agent_output
-from i18n import LANG_FOLLOW_INSTRUCTION
+from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
 from skills.web_search import get_search_prompt, get_skill_prompt
-from prompts import get_prompt
+from prompts import get_prompt, EXPERT_INTRODUCTION_RETITLE, EXPERT_INTRODUCTION_FIXED
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +102,13 @@ class BaseMeetingAgent:
         role_label: str,
         system_prompt: str,
         provider: LLMProviderConfig,
+        temperature: float = 0.7,
     ):
         self.name = name
         self.role_label = role_label
         self.system_prompt = system_prompt
         self.provider = provider
+        self.temperature = temperature
         self.client = create_client(provider)
         self.model = provider.model
 
@@ -120,7 +122,7 @@ class BaseMeetingAgent:
                         {"role": "system", "content": self.system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.7,
+                    temperature=self.temperature,
                 )
                 return response.choices[0].message.content or ""
             except Exception as e:
@@ -157,13 +159,22 @@ class ExpertAgent(BaseMeetingAgent):
         name: str,
         role_label: str,
         provider: LLMProviderConfig,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        allow_retitle: bool = True,
     ):
         self.base_name = name
         self.style_label = role_label
-        super().__init__(name, role_label, "", provider)
+        self.base_system_prompt = system_prompt
+        self.allow_retitle = allow_retitle
+        super().__init__(name, role_label, "", provider, temperature=temperature or 0.7)
         self._refresh_system_prompt()
 
     def _refresh_system_prompt(self):
+        if self.base_system_prompt:
+            # Full persona from a markdown agent definition; keep it verbatim.
+            self.system_prompt = self.base_system_prompt + LANG_FOLLOW_INSTRUCTION
+            return
         self.system_prompt = (
             f"You are an expert on a roundtable meeting. Your current public title for this topic "
             f"is [{self.name}], and your base thinking style is [{self.style_label}]. "
@@ -390,19 +401,27 @@ class ModeratorAgent(BaseMeetingAgent):
     def __init__(
         self,
         provider: LLMProviderConfig,
-        name: str = "Moderator",
+        name: str = MODERATOR_DISPLAY_NAME,
     ):
         super().__init__(name, "Arbiter", self._build_system_prompt(), provider)
 
     def _build_system_prompt(self) -> str:
         return (
-            "You are the arbiter and host of a roundtable meeting. Your duties are to guide the "
+            "You are the Committee Chair of a roundtable meeting. Your duties are to guide the "
             "discussion, summarize each round, score every expert, and output a recommended "
             "solution at the end. Stay neutral and do not dive deep into domain analysis yourself."
             + LANG_FOLLOW_INSTRUCTION
         )
 
-    async def opening(self, topic: str, expert_specs: str, goal: Optional[str], constraints: list, background: Optional[str]) -> str:
+    async def opening(
+        self,
+        topic: str,
+        expert_specs: str,
+        goal: Optional[str],
+        constraints: list,
+        background: Optional[str],
+        retitle: bool = True,
+    ) -> str:
         goal_section = f"Goal: {goal}" if goal else ""
         constraints_section = (
             ("Constraints:\n" + "\n".join(f"- {c}" for c in constraints))
@@ -414,6 +433,7 @@ class ModeratorAgent(BaseMeetingAgent):
         prompt = get_prompt("MODERATOR_OPENING").format(
             topic=topic,
             expert_specs=expert_specs,
+            expert_introduction=EXPERT_INTRODUCTION_RETITLE if retitle else EXPERT_INTRODUCTION_FIXED,
             goal_section=goal_section,
             constraints_section=constraints_section,
             background_section=background_section,

@@ -7,23 +7,33 @@ responds in the language of the user's topic, whatever that language is.
 
 from i18n import LANG_FOLLOW_INSTRUCTION
 
-_PROMPTS: dict[str, str] = {
-    "MODERATOR_OPENING": """\
-You are the arbiter and host of this roundtable meeting.
-Complete the opening based on the user's topic:
-1. Restate the topic
-2. State the goals of this meeting
-3. Give the criteria for judging a good answer
-4. Explain the round rules
-5. Introduce the participating experts: based on the current topic, you must re-assign each of these preset experts a more fitting professional title, rather than giving them personal names.
-The participating experts and their base roles are:
-{expert_specs}
+# Instruction for the moderator on how to introduce the experts.
+# Retitle mode (built-in generic experts): the moderator assigns topic-specific titles.
+EXPERT_INTRODUCTION_RETITLE = """based on the current topic, you must re-assign each of these preset experts a more fitting professional title, rather than giving them personal names.
 
 Requirements:
 - New titles must fit the current topic; for example, when discussing finance, titles such as "Macro Strategy Expert", "Risk Control Expert", or "Industry Research Expert" are appropriate.
 - Do not use personal names, codes, or nicknames such as "Old Wang", "Alice", or "A1".
 - Every participating expert keeps their original role; only the externally displayed title changes to a professional role that better fits the topic.
-- Introduce each one explicitly using the "[original role => new title]" format, e.g. [Critical Expert => Risk Control Expert].
+- Introduce each one explicitly using the "[original role => new title]" format, e.g. [Critical Expert => Risk Control Expert]."""
+
+# Fixed mode (markdown-defined agents): the experts keep their given identities.
+EXPERT_INTRODUCTION_FIXED = (
+    "introduce each expert by the name and professional role exactly as listed below. "
+    "Do not rename them or invent new titles."
+)
+
+_PROMPTS: dict[str, str] = {
+    "MODERATOR_OPENING": """\
+You are the Committee Chair of this roundtable meeting.
+Complete the opening based on the user's topic:
+1. Restate the topic
+2. State the goals of this meeting
+3. Give the criteria for judging a good answer
+4. Explain the round rules
+5. Introduce the participating experts. {expert_introduction}
+The participating experts and their roles are:
+{expert_specs}
 
 Stay neutral, concise, and structured.
 Do not give the final answer in advance.
@@ -57,7 +67,7 @@ Output in the following JSON format (output nothing else):
 }}
 {skill_prompt}
 Topic: {topic}
-Moderator opening:
+Committee Chair opening:
 {opening}
 """,
     "EXPERT_ROUND2": """\
@@ -98,7 +108,7 @@ Topic: {topic}
 Summary of each expert's round 1 statement:
 {round1_summary}
 
-Moderator summary:
+Committee Chair summary:
 {moderator_summary}
 """,
     "EXPERT_ROUND3": """\
@@ -130,7 +140,7 @@ Topic: {topic}
 Summary of each expert's round 2 statement:
 {round2_summary}
 
-Moderator summary:
+Committee Chair summary:
 {moderator_summary}
 
 Attacks directed at you ({agent_name}):
@@ -159,7 +169,7 @@ Highly compressed summary of the first three rounds:
 {compressed_summary}
 """,
     "MODERATOR_SUMMARY": """\
-You are the arbiter of the roundtable meeting.
+You are the Committee Chair of the roundtable meeting.
 Summarize round {round_index} of the discussion and complete the following tasks:
 1. Summarize the key new points of this round
 2. Summarize the strongest attacks of this round
@@ -194,7 +204,7 @@ Each expert's statement this round:
 {previous_context}
 """,
     "MODERATOR_FINAL": """\
-You are the arbiter of this roundtable meeting.
+You are the Committee Chair of this roundtable meeting.
 Based on all rounds, output the final summary report.
 
 Output in the following JSON format (output nothing else):

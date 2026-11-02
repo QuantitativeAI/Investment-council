@@ -63,9 +63,15 @@ def _clean_expert_title(raw_title: str) -> str:
 
 
 def _retitle_experts_from_opening(experts: List[ExpertAgent], opening_text: str) -> dict[str, str]:
-    """Extract topic-specific expert titles from the moderator opening."""
+    """Extract topic-specific expert titles from the moderator opening.
+
+    Experts with allow_retitle=False (markdown-defined agents) keep their
+    fixed identities and are skipped.
+    """
     retitled: dict[str, str] = {}
     for expert in experts:
+        if not expert.allow_retitle:
+            continue
         source_label = expert.base_name
         patterns = [
             rf"[【\[]\s*{re.escape(source_label)}\s*(?:=>|->|→|:|：)\s*(?P<title>[^\]】\n]{{2,30}})\s*[】\]]",
@@ -117,12 +123,14 @@ class RoundtableMeeting:
 
         # Round 0: Moderator opening
         expert_specs = _build_expert_specs(self.experts)
+        retitle_enabled = any(expert.allow_retitle for expert in self.experts)
         opening_text = await self.moderator.opening(
             topic=topic,
             expert_specs=expert_specs,
             goal=meeting_input.goal,
             constraints=meeting_input.constraints,
             background=meeting_input.background,
+            retitle=retitle_enabled,
         )
         logger.info("Moderator opening:\n%s", opening_text)
         _retitle_experts_from_opening(self.experts, opening_text)
@@ -242,14 +250,14 @@ class RoundtableMeeting:
 
     def _build_full_discussion(self, opening_text: str) -> str:
         """Build the full discussion text for the final report."""
-        parts = [f"## Moderator Opening\n{opening_text}"]
+        parts = [f"## Committee Chair Opening\n{opening_text}"]
 
         for summary in self.summaries:
             round_idx = summary.round_index
             round_msgs = self._round_messages(round_idx)
             parts.append(f"\n## Round {round_idx} Statements")
             parts.append(_format_messages(round_msgs))
-            parts.append(f"\n## Round {round_idx} Moderator Summary")
+            parts.append(f"\n## Round {round_idx} Committee Chair Summary")
             parts.append(summary.raw_text)
 
         return "\n\n".join(parts)

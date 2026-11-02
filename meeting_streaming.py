@@ -7,6 +7,7 @@ from typing import Any, Callable, Coroutine, List
 
 from models import MeetingInput, AgentMessage, RoundSummary, FinalReport
 from agents import ModeratorAgent, ExpertAgent
+from i18n import MODERATOR_DISPLAY_NAME
 from meeting import (
     _format_messages,
     _extract_attacks_on_agent,
@@ -60,22 +61,24 @@ class StreamingMeeting:
 
         # === Round 0: Opening ===
         self._check_cancel()
-        await self._emit({"type": "round_start", "round": 0, "title": "Moderator Opening"})
-        await self._emit({"type": "agent_start", "agent": "Moderator", "role": "Arbiter", "round": 0})
+        await self._emit({"type": "round_start", "round": 0, "title": "Committee Chair Opening"})
+        await self._emit({"type": "agent_start", "agent": MODERATOR_DISPLAY_NAME, "role": "Arbiter", "round": 0})
 
         expert_specs = _build_expert_specs(self.experts)
+        retitle_enabled = any(expert.allow_retitle for expert in self.experts)
         opening_text = await self.moderator.opening(
             topic=topic,
             expert_specs=expert_specs,
             goal=meeting_input.goal,
             constraints=meeting_input.constraints,
             background=meeting_input.background,
+            retitle=retitle_enabled,
         )
         self.opening_text = opening_text
 
         await self._emit({
             "type": "agent_message",
-            "agent": "Moderator",
+            "agent": MODERATOR_DISPLAY_NAME,
             "role": "Arbiter",
             "round": 0,
             "content": opening_text,
@@ -167,20 +170,20 @@ class StreamingMeeting:
         else:
             await self._emit({
                 "type": "system",
-                "content": "Moderator determined discussion has sufficiently converged, skipping Round 4.",
+                "content": "The Committee Chair determined discussion has sufficiently converged, skipping Round 4.",
             })
 
         # === Final Report ===
         self._check_cancel()
         await self._emit({"type": "round_start", "round": "final", "title": "Final Report"})
-        await self._emit({"type": "agent_start", "agent": "Moderator", "role": "Arbiter", "round": "final"})
+        await self._emit({"type": "agent_start", "agent": MODERATOR_DISPLAY_NAME, "role": "Arbiter", "round": "final"})
 
         all_discussion = self._build_full_discussion(opening_text)
         final_report = await self.moderator.finalize(topic=topic, all_discussion=all_discussion)
 
         await self._emit({
             "type": "final_report",
-            "agent": "Moderator",
+            "agent": MODERATOR_DISPLAY_NAME,
             "role": "Arbiter",
             "round": "final",
             "content": self._format_final_report(final_report),
@@ -253,7 +256,7 @@ class StreamingMeeting:
     async def _run_moderator_summary(
         self, round_index: int, topic: str, round_messages: str, previous_context: str = ""
     ) -> RoundSummary:
-        await self._emit({"type": "agent_start", "agent": "Moderator", "role": "Arbiter", "round": round_index})
+        await self._emit({"type": "agent_start", "agent": MODERATOR_DISPLAY_NAME, "role": "Arbiter", "round": round_index})
 
         summary = await self.moderator.summarize_and_score(
             round_index=round_index,
@@ -284,7 +287,7 @@ class StreamingMeeting:
 
         await self._emit({
             "type": "moderator_summary",
-            "agent": "Moderator",
+            "agent": MODERATOR_DISPLAY_NAME,
             "role": "Arbiter",
             "round": round_index,
             "content": "\n".join(parts),
