@@ -1,4 +1,4 @@
-# Multi-Agent Roundtable Meeting System
+# Multi-expert investment council
 
 [中文版](#中文说明) | [English](#english)
 
@@ -8,7 +8,7 @@
 
 ### Overview
 
-A multi-agent roundtable discussion system where multiple AI experts debate a given topic through structured rounds, guided by a neutral **Committee Chair**. The system simulates a real expert panel meeting:
+Multi-expert investment council discussion system where multiple AI financial experts debate a given investment idea through structured rounds, guided by a moderator/arbiter. The system simulates a real expert panel meeting:
 
 1. **User** submits a topic
 2. **Committee Chair** opens the meeting, states rules and objectives
@@ -156,7 +156,7 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 
 ### 概述
 
-一个多Agent圆桌讨论系统，多个AI专家围绕给定议题进行结构化多轮辩论，由中立的**委员会主席（Committee Chair）**引导。系统模拟真实的专家圆桌会议：
+这是一种多专家投资决策讨论系统，由多位人工智能金融专家在主持人/仲裁者的引导下，通过结构化的多轮讨论，对特定的投资构想进行辩论。该系统模拟了真实的专家小组会议：
 
 1. **用户** 提出议题
 2. **委员会主席** 开场，声明规则和目标
