@@ -11,6 +11,7 @@ from meeting import RoundtableMeeting
 from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
 from agent_defs import build_expert_agents
 from skills.web_search import execute as skill_web_search, is_available as skill_search_available
+from mcp_gateway import McpGateway, load_mcp_servers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,9 +58,11 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
     """Run the research phase via CLI, similar to web_server._research_phase."""
     from openai import AsyncOpenAI
     from search import (
+        build_research_prompt,
         fetch_webpage_content,
         get_search_api_url,
         get_web_search_api_url,
+        is_local_news_api_configured,
         parse_research_command,
         tavily_search,
         web_search,
@@ -88,9 +91,11 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
 
     print(f"🔍 The {MODERATOR_DISPLAY_NAME} is researching background information...")
 
+    system_prompt, instructions = build_research_prompt(is_local_news_api_configured())
+
     for i in range(max_searches):
         prompt = (
-            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting. You need to search a news database for background information on the upcoming topic.\n\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting. You need to gather background information on the upcoming topic using the available search tools.\n\n"
             f"Topic: {topic}\n"
         )
         if background:
@@ -101,21 +106,13 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
             prompt += f"\nPreviously executed search/browse commands: {', '.join(searched_queries)}\n"
         if last_feedback:
             prompt += f"\nLast search feedback: {last_feedback}\n"
-        prompt += (
-            "\nPlease decide whether more searching is needed. Local search is unlimited — search as much as you need.\n"
-            "If information is sufficient, reply: DONE\n"
-            "If more search is needed, reply in exactly one of these forms: 1) one local-news keyword; 2) ALL; 3) RECENT:category; 4) WEB:search terms; 5) FETCH:url. Do not reply with sentences.\n"
-            "Available categories include: china_finance, finance, international, tech, defense, asia, europe, research, middle_east.\n"
-            "Important: do not repeat any command that has already been executed. If ALL or RECENT:china_finance has already been used, switch to another category or reply DONE.\n"
-            "Strategy: use local-news keywords for recent market news; use WEB: for fundamentals, Eastmoney/Xueqiu/announcements/research; when you already have a valuable URL, use FETCH:url to read the page.\n"
-            "Start with 1-2 keyword searches by default. Do not use ALL or RECENT first. Local browse mode should be used only after local keyword misses or for broad market overview; WEB: may be used directly when external information is clearly needed."
-        )
+        prompt += instructions
 
         try:
             resp = await client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are a research assistant. You have five modes: 1) one-word local news keyword search; 2) browse all recent news with ALL; 3) browse recent news by category with RECENT:category; 4) open-web search with WEB:query; 5) webpage fetch with FETCH:url. ALL / RECENT:* go to the local /recent API, WEB: goes to open-web search, and FETCH: reads the page body. Do not repeat commands. Use WEB: or FETCH: when you need Eastmoney/Xueqiu/announcements/fundamentals beyond the local database."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
@@ -172,9 +169,10 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
             new_urls = result_urls - seen_urls
 
             if backend == "local" and actual_query and result.get("result_count", 0) == 0:
+                scope = "the local database" if is_local_news_api_configured() else "recent news"
                 last_feedback = (
-                    f"Keyword {query} returned no results. Try another short keyword first; "
-                    "if you need information beyond the local database, use WEB: for Eastmoney/Xueqiu/announcements/research."
+                    f"Keyword {query} returned no results. Try a different short keyword, "
+                    f"or use WEB: for announcements, fundamentals, and research beyond {scope}."
                 )
                 print(f"  → Found 0 results")
                 print(f"  → {last_feedback}")
@@ -198,6 +196,12 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
                     break
         except Exception as e:
             logger.warning("Search failed for query '%s': %s", query, e)
+            message = f"🔍 Search failed: {e}"
+            error_text = str(e).lower()
+            if any(marker in error_text for marker in ("401", "403", "unauthorized", "api key")):
+                message += " The search backend rejected the request — check TAVILY_API_KEY (or your search API configuration) in .env."
+            print(message)
+            break
 
     if collected_info:
         print(f"🔍 Research complete ({len(searched_queries)} searches). Starting meeting...\n")
@@ -231,10 +235,13 @@ async def run_meeting(
     """
     config = load_config(env_path)
 
-    # Research phase if search is enabled
+    # Research phase if search is enabled and a backend is configured
     search_background = ""
     if search_enabled:
-        search_background = await _research_phase_cli(topic, background, env_path)
+        if skill_search_available():
+            search_background = await _research_phase_cli(topic, background, env_path)
+        else:
+            print("🔍 No search backend configured (set TAVILY_API_KEY or SEARCH_API_URL). Skipping pre-meeting research.")
 
     combined_background = ""
     if background:
@@ -270,19 +277,33 @@ async def run_meeting(
         for expert in experts:
             expert.search_fn = skill_web_search
 
+    # Connect MCP servers (independent of the search toggle); experts may call
+    # their tools during the meeting.
+    mcp_servers = load_mcp_servers()
+    mcp_gateway = None
+    if mcp_servers:
+        mcp_gateway = McpGateway(mcp_servers)
+        await mcp_gateway.start()
+        if mcp_gateway.has_tools():
+            for expert in experts:
+                expert.tool_gateway = mcp_gateway
+
     for expert in experts:
         logger.info(
             "Expert [%s] using provider: %s (%s)",
             expert.name, expert.provider.name, expert.provider.model,
         )
 
-    meeting = RoundtableMeeting(
-        moderator=moderator,
-        experts=experts,
-        max_rounds=max_rounds,
-    )
-
-    final_report = await meeting.run(meeting_input)
+    try:
+        meeting = RoundtableMeeting(
+            moderator=moderator,
+            experts=experts,
+            max_rounds=max_rounds,
+        )
+        final_report = await meeting.run(meeting_input)
+    finally:
+        if mcp_gateway is not None:
+            await mcp_gateway.close()
 
     # Output as markdown
     if final_report.raw_markdown and not final_report.problem_definition:

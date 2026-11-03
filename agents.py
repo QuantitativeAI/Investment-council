@@ -12,6 +12,7 @@ from models import AgentMessage, RoundScore, RoundSummary, FinalReport, FinalSco
 from parser import parse_json_response, safe_parse_agent_output
 from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
 from skills.web_search import get_search_prompt, get_skill_prompt
+from mcp_gateway import build_mcp_tools_prompt
 from prompts import get_prompt, EXPERT_INTRODUCTION_RETITLE, EXPERT_INTRODUCTION_FIXED
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,32 @@ def _build_search_request(search_query: Any) -> tuple[dict[str, Any], str, str]:
         sort_keys=True,
     )
     return params, display, request_key
+
+
+def _build_tool_call_request(tool_call: Any) -> tuple[str, str, dict, str, str]:
+    """Normalize a model-emitted ``tool_call`` object into dispatchable parts.
+
+    Returns ``(server_name, tool_name, arguments, display, request_key)``.
+    Raises ``ValueError`` when the call is malformed.
+    """
+    if not isinstance(tool_call, dict):
+        raise ValueError("tool_call must be an object with 'server', 'tool', and 'arguments'")
+    server_name = str(tool_call.get("server", "") or "").strip()
+    tool_name = str(tool_call.get("tool", "") or "").strip()
+    arguments = tool_call.get("arguments", {}) or {}
+    if not isinstance(arguments, dict):
+        raise ValueError("tool_call.arguments must be an object")
+    if not server_name:
+        raise ValueError("tool_call requires a 'server' name")
+    if not tool_name:
+        raise ValueError("tool_call requires a 'tool' name")
+    display = f"MCP:{server_name}.{tool_name}"
+    request_key = "MCP:" + json.dumps(
+        {"server": server_name, "tool": tool_name, "arguments": arguments},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return server_name, tool_name, arguments, display, request_key
 
 
 def create_client(provider: LLMProviderConfig) -> AsyncOpenAI:
@@ -154,6 +181,9 @@ class ExpertAgent(BaseMeetingAgent):
     # Async research callback: async (**params) -> dict with 'summary', 'result_count'
     search_fn: Optional[Callable[..., Coroutine]] = None
 
+    # Optional MCP gateway exposing connected MCP server tools (mcp_gateway.McpGateway)
+    tool_gateway: Optional[Any] = None
+
     def __init__(
         self,
         name: str,
@@ -184,8 +214,13 @@ class ExpertAgent(BaseMeetingAgent):
         )
 
     def _skill_prompt(self) -> str:
-        """Return skill prompt text if search is available, empty string otherwise."""
-        return get_skill_prompt() if self.search_fn else ""
+        """Return skill prompt text for the available tools, empty string otherwise."""
+        parts: list[str] = []
+        if self.search_fn:
+            parts.append(get_skill_prompt())
+        if self.tool_gateway is not None:
+            parts.append(build_mcp_tools_prompt(self.tool_gateway.catalog()))
+        return "".join(parts)
 
     async def _speak_with_search(
         self, prompt: str, expected_keys: list[str], round_index: int,
@@ -201,12 +236,119 @@ class ExpertAgent(BaseMeetingAgent):
         keyword_searches = 0
         decision_rounds = 0
 
-        if self.search_fn:
+        if self.search_fn or self.tool_gateway is not None:
             while executed_searches < MAX_AGENT_SEARCHES and decision_rounds < MAX_AGENT_SEARCHES * 3:
                 decision_rounds += 1
                 search_query = content.pop("search_query", None) if isinstance(content, dict) else None
+                tool_call = content.pop("tool_call", None) if isinstance(content, dict) else None
+
+                if tool_call is not None:
+                    if self.tool_gateway is None:
+                        search_history.append(
+                            get_search_prompt("ERROR").format(
+                                query=str(tool_call),
+                                error="No MCP tools are available in this meeting.",
+                                remaining_searches=MAX_AGENT_SEARCHES - executed_searches,
+                            )
+                        )
+                        raw = await self._call_llm(prompt + "".join(search_history))
+                        content = safe_parse_agent_output(raw, expected_keys + ["search_query", "tool_call"])
+                        continue
+                    remaining_searches = MAX_AGENT_SEARCHES - executed_searches
+                    try:
+                        server_name, tool_name, arguments, query_display, request_key = _build_tool_call_request(tool_call)
+                    except Exception as e:
+                        search_history.append(
+                            get_search_prompt("ERROR").format(
+                                query=str(tool_call),
+                                error=e,
+                                remaining_searches=remaining_searches,
+                            )
+                        )
+                        raw = await self._call_llm(prompt + "".join(search_history))
+                        content = safe_parse_agent_output(raw, expected_keys + ["search_query", "tool_call"])
+                        continue
+
+                    if request_key in seen_requests:
+                        logger.info("[%s] Round %d duplicate MCP call skipped: '%s'", self.name, round_index, query_display)
+                        search_history.append(
+                            get_search_prompt("DUPLICATE").format(
+                                query=query_display,
+                                remaining_searches=remaining_searches,
+                            )
+                        )
+                        if remaining_searches == 0:
+                            search_history.append(get_search_prompt("FINAL_ONLY"))
+                            raw = await self._call_llm(prompt + "".join(search_history))
+                            content = safe_parse_agent_output(raw, expected_keys)
+                            break
+                        raw = await self._call_llm(prompt + "".join(search_history))
+                        content = safe_parse_agent_output(raw, expected_keys + ["search_query", "tool_call"])
+                        continue
+
+                    seen_requests.add(request_key)
+                    executed_searches += 1
+                    remaining_searches = MAX_AGENT_SEARCHES - executed_searches
+                    try:
+                        tool_result = await self.tool_gateway.call_tool(server_name, tool_name, arguments)
+                    except Exception as e:
+                        logger.warning("[%s] MCP call failed for '%s': %s", self.name, query_display, e)
+                        tool_result = {"summary": str(e), "result_count": 0, "is_error": True}
+
+                    if tool_result.get("is_error"):
+                        search_history.append(
+                            get_search_prompt("ERROR").format(
+                                query=query_display,
+                                error=tool_result.get("summary", ""),
+                                remaining_searches=remaining_searches,
+                            )
+                        )
+                    else:
+                        search_info.append(
+                            {
+                                "query": query_display,
+                                "result_count": tool_result.get("result_count", 0),
+                                "search_index": executed_searches,
+                                "max_searches": MAX_AGENT_SEARCHES,
+                            }
+                        )
+                        logger.info(
+                            "[%s] Round %d MCP tool %d/%d: '%s'",
+                            self.name, round_index, executed_searches, MAX_AGENT_SEARCHES, query_display,
+                        )
+                        search_history.append(
+                            get_search_prompt("REFINE").format(
+                                query=query_display,
+                                summary=tool_result.get("summary", ""),
+                                search_index=executed_searches,
+                                max_searches=MAX_AGENT_SEARCHES,
+                                remaining_searches=remaining_searches,
+                            )
+                        )
+
+                    if remaining_searches == 0:
+                        search_history.append(get_search_prompt("FINAL_ONLY"))
+                        raw = await self._call_llm(prompt + "".join(search_history))
+                        content = safe_parse_agent_output(raw, expected_keys)
+                        break
+
+                    raw = await self._call_llm(prompt + "".join(search_history))
+                    content = safe_parse_agent_output(raw, expected_keys + ["search_query", "tool_call"])
+                    continue
+
                 if not search_query:
                     break
+                if self.search_fn is None:
+                    search_history.append(
+                        get_search_prompt("ERROR").format(
+                            query=str(search_query),
+                            error="No search tools are available in this meeting.",
+                            remaining_searches=MAX_AGENT_SEARCHES - executed_searches,
+                        )
+                    )
+                    raw = await self._call_llm(prompt + "".join(search_history))
+                    content = safe_parse_agent_output(raw, expected_keys + ["search_query", "tool_call"])
+                    continue
 
                 try:
                     params, query_display, request_key = _build_search_request(search_query)
@@ -308,6 +450,7 @@ class ExpertAgent(BaseMeetingAgent):
 
         if isinstance(content, dict):
             content.pop("search_query", None)
+            content.pop("tool_call", None)
 
         return AgentMessage(
             round_index=round_index,
