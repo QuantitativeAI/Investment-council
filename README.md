@@ -8,7 +8,7 @@
 
 ### Overview
 
-Multi-expert investment council discussion system where multiple AI financial experts debate a given investment idea through structured rounds, guided by a moderator/arbiter. The system simulates a real expert panel meeting:
+Multi-expert investment council discussion system where multiple AI financial experts debate a given investment idea through structured rounds, guided by a Committee Chair. The system simulates a real expert panel meeting:
 
 1. **User** submits a topic
 2. **Committee Chair** opens the meeting, states rules and objectives
@@ -27,7 +27,7 @@ Multi-expert investment council discussion system where multiple AI financial ex
 - **Web search** — optional Tavily search integration for background research before the meeting
 - **Post-meeting chat** — after the meeting ends, continue chatting with the Committee Chair about the results
 - **Custom markdown agents** — define your own council of experts as markdown files in `agents/`
-- **Bilingual UI** — English / Chinese toggle
+- **Language-agnostic meetings** — the council answers in whatever language you ask in (the UI is English)
 - **Session persistence** — chat history saved in browser localStorage
 
 ### Quick Start
@@ -113,11 +113,11 @@ The default council (Portfolio Manager, Earnings Reviewer, Business Analyst, Dat
 
 ```markdown
 ---
-ame: Portfolio Manager
+name: Portfolio Manager
 description: One-line role description shown to the Committee Chair
 temperature: 0.45          # optional, default 0.7
 ---
-You are the Head Portfolio Manager on an investment roundtable...
+You are the Head Portfolio Manager on the investment council...
 (full persona — constraints, workflow, output expectations)
 ```
 
@@ -146,8 +146,7 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 ├── static/index.html       # Web UI
 ├── tests/                  # Minimal release smoke tests
 ├── .env.example            # Example configuration
-├── requirements.txt        # Python dependencies
-└── SPECDOC.md              # Full specification document
+└── requirements.txt        # Python dependencies
 ```
 
 ---
@@ -156,7 +155,7 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 
 ### 概述
 
-这是一种多专家投资决策讨论系统，由多位人工智能金融专家在主持人/仲裁者的引导下，通过结构化的多轮讨论，对特定的投资构想进行辩论。该系统模拟了真实的专家小组会议：
+这是一种多专家投资决策讨论系统，由多位人工智能金融专家在委员会主席的引导下，通过结构化的多轮讨论，对特定的投资构想进行辩论。该系统模拟了真实的专家小组会议：
 
 1. **用户** 提出议题
 2. **委员会主席** 开场，声明规则和目标
@@ -175,7 +174,7 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 - **联网搜索** — 可选的Tavily搜索，会议前自动获取背景信息
 - **会后对话** — 会议结束后可继续与委员会主席对话讨论结果
 - **自定义Markdown专家** — 在 `agents/` 目录中用markdown文件定义自己的专家团
-- **中英双语** — 界面支持中英文切换
+- **语言自适应** — 会议自动以用户提问的语言作答（界面为英文）
 - **会话持久化** — 聊天记录保存在浏览器localStorage
 
 ### 快速开始
@@ -258,11 +257,11 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 默认专家团（Portfolio Manager、Earnings Reviewer、Business Analyst、Data Researcher）以markdown文件形式定义在 `agents/` 目录中，一个文件一个专家。文件由YAML frontmatter和markdown正文组成，正文即该专家的完整系统提示词：
 
 - `name` — 显示名称（缺省时使用文件名）
-- `description` — 开场时展示给仲裁者，说明该专家的职责
+- `description` — 开场时展示给委员会主席，说明该专家的职责
 - `temperature` — 该专家的采样温度（可选，默认0.7）
 - 其他frontmatter字段（如opencode的 `mode`、`tools`、`steps`、`model`）会被忽略
 
-markdown定义的专家保持**固定身份**：仲裁者按其原名介绍，不会按议题重新命名。若 `agents/` 目录不存在或为空，则使用内置的通用专家。可通过 `AGENTS_DIR` 指向其他目录使用不同的专家组合。
+markdown定义的专家保持**固定身份**：委员会主席按其原名介绍，不会按议题重新命名。若 `agents/` 目录不存在或为空，则使用内置的通用专家。可通过 `AGENTS_DIR` 指向其他目录使用不同的专家组合。
 
 ### 项目结构
 
@@ -282,6 +281,5 @@ markdown定义的专家保持**固定身份**：仲裁者按其原名介绍，�
 ├── static/index.html       # Web界面
 ├── tests/                  # 最小发布冒烟测试
 ├── .env.example            # 配置示例
-├── requirements.txt        # Python依赖
-└── SPECDOC.md              # 完整规格文档
+└── requirements.txt        # Python依赖
 ```

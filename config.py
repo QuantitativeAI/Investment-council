@@ -1,4 +1,4 @@
-"""Configuration loader for the Roundtable Meeting System V1.
+"""Configuration loader for the Investment Council.
 
 Reads LLM provider configs from .env file:
 - MODERATOR_LLM_* for the moderator's dedicated LLM

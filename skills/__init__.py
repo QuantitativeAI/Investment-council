@@ -1,4 +1,4 @@
-"""Skills available to expert agents during roundtable meetings."""
+"""Skills available to expert agents during council meetings."""
 
 from skills.web_search import get_skill_prompt, execute as web_search, is_available as search_available
 

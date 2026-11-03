@@ -1,4 +1,4 @@
-"""Data structures for the Roundtable Meeting System V1."""
+"""Data structures for the Investment Council."""
 
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -56,7 +56,7 @@ class RoundSummary:
 
 @dataclass
 class FinalReport:
-    """Final roundtable report produced by the moderator."""
+    """Final council report produced by the moderator."""
     problem_definition: str
     main_consensus: List[str]
     main_disagreements: List[str]

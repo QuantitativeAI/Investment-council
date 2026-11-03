@@ -1,4 +1,4 @@
-"""Orchestrator for the Roundtable Meeting System V1."""
+"""Orchestrator for the Investment Council."""
 
 import asyncio
 import json
@@ -99,7 +99,7 @@ def _retitle_experts_from_opening(experts: List[ExpertAgent], opening_text: str)
 
 
 class RoundtableMeeting:
-    """Orchestrates a multi-agent roundtable meeting."""
+    """Orchestrates a multi-agent council meeting."""
 
     def __init__(
         self,
@@ -117,9 +117,9 @@ class RoundtableMeeting:
         return [m for m in self.messages if m.round_index == round_index]
 
     async def run(self, meeting_input: MeetingInput) -> FinalReport:
-        """Run the full roundtable meeting and return the final report."""
+        """Run the full council meeting and return the final report."""
         topic = meeting_input.topic
-        logger.info("=== Roundtable Meeting Start: %s ===", topic)
+        logger.info("=== Council Meeting Start: %s ===", topic)
 
         # Round 0: Moderator opening
         expert_specs = _build_expert_specs(self.experts)

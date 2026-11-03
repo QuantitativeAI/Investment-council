@@ -1,4 +1,4 @@
-"""Entry point for the Roundtable Meeting System V1."""
+"""Entry point for the Investment Council (CLI)."""
 
 import asyncio
 import logging
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def _render_final_report_markdown(report) -> str:
     """Render FinalReport as a readable markdown string."""
-    lines = ["# Final Roundtable Report", ""]
+    lines = ["# Final Council Report", ""]
     lines.append("## 1. Problem Definition")
     lines.append(report.problem_definition)
     lines.append("")
@@ -90,7 +90,7 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
 
     for i in range(max_searches):
         prompt = (
-            f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting. You need to search a news database for background information on the upcoming topic.\n\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting. You need to search a news database for background information on the upcoming topic.\n\n"
             f"Topic: {topic}\n"
         )
         if background:
@@ -214,7 +214,7 @@ async def run_meeting(
     env_path: str | None = None,
     search_enabled: bool = False,
 ) -> str:
-    """Run a roundtable meeting and return the final report as markdown.
+    """Run a council meeting and return the final report as markdown.
 
     Args:
         topic: The discussion topic.
@@ -405,7 +405,7 @@ def _interactive_chat(meeting_report: str, env_path: str | None = None):
     client = OpenAI(**kwargs)
 
     system_prompt = (
-        f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting that just ended. Below is the full meeting report.\n"
+        f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting that just ended. Below is the full meeting report.\n"
         "The user has follow-up questions about the meeting. Answer based on the report.\n"
         "Stay neutral, accurate, and concise. If the user asks about something not discussed, say so.\n\n"
         + f"=== Meeting Report ===\n{meeting_report}\n=== End of Report ==="

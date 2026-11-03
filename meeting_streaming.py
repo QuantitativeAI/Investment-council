@@ -23,7 +23,7 @@ EventCallback = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
 
 class StreamingMeeting:
-    """Runs a roundtable meeting and streams events to a callback."""
+    """Runs a council meeting and streams events to a callback."""
 
     def __init__(
         self,
@@ -307,7 +307,7 @@ class StreamingMeeting:
 
     @staticmethod
     def _format_final_report(report: FinalReport) -> str:
-        lines = [f"# Final Roundtable Report\n"]
+        lines = [f"# Final Council Report\n"]
         lines.append(f"## 1. Problem Definition\n{report.problem_definition}\n")
         lines.append(f"## 2. Main Consensus")
         for c in report.main_consensus:
