@@ -1,4 +1,4 @@
-"""Agent interfaces for the Roundtable Meeting System V1."""
+"""Agent interfaces for the Investment Council."""
 
 import json
 import logging
@@ -149,7 +149,7 @@ class BaseMeetingAgent:
 
 
 class ExpertAgent(BaseMeetingAgent):
-    """An expert agent participating in the roundtable."""
+    """An expert agent participating in the council meeting."""
 
     # Async research callback: async (**params) -> dict with 'summary', 'result_count'
     search_fn: Optional[Callable[..., Coroutine]] = None
@@ -176,7 +176,7 @@ class ExpertAgent(BaseMeetingAgent):
             self.system_prompt = self.base_system_prompt + LANG_FOLLOW_INSTRUCTION
             return
         self.system_prompt = (
-            f"You are an expert on a roundtable meeting. Your current public title for this topic "
+            f"You are an expert on a council meeting. Your current public title for this topic "
             f"is [{self.name}], and your base thinking style is [{self.style_label}]. "
             "Always participate in the discussion in this style, offering constructive, substantive "
             "points, and identify yourself by your current public title."
@@ -396,7 +396,7 @@ class ExpertAgent(BaseMeetingAgent):
 
 
 class ModeratorAgent(BaseMeetingAgent):
-    """The moderator/arbiter of the roundtable meeting."""
+    """The Committee Chair of the council meeting."""
 
     def __init__(
         self,
@@ -407,7 +407,7 @@ class ModeratorAgent(BaseMeetingAgent):
 
     def _build_system_prompt(self) -> str:
         return (
-            "You are the Committee Chair of a roundtable meeting. Your duties are to guide the "
+            "You are the Committee Chair of a council meeting. Your duties are to guide the "
             "discussion, summarize each round, score every expert, and output a recommended "
             "solution at the end. Stay neutral and do not dive deep into domain analysis yourself."
             + LANG_FOLLOW_INSTRUCTION

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Roundtable Meeting System</title>
+<title>Investment Council</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/marked@latest/marked.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
@@ -52,18 +52,6 @@ body {
   align-items: center;
   gap: 8px;
 }
-.btn-lang {
-  background: transparent;
-  color: var(--sidebar-text);
-  border: 1px solid #555;
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  white-space: nowrap;
-  transition: border-color .2s;
-}
-.btn-lang:hover { border-color: #aaa; color: #fff; }
 .btn-new-session {
   background: var(--accent);
   color: #fff;
@@ -367,9 +355,8 @@ body {
 <!-- Sidebar -->
 <div class="sidebar">
   <div class="sidebar-header">
-    <span id="sidebarTitle">🏛️ Roundtable</span>
+    <span id="sidebarTitle">🏛️ Investment Council</span>
     <div style="display:flex;gap:6px;align-items:center">
-      <button class="btn-lang" id="btnLang" onclick="toggleLang()">CN/EN</button>
       <button class="btn-new-session" id="btnNewSession" onclick="newSession()">+ New</button>
     </div>
   </div>
@@ -379,88 +366,42 @@ body {
 <!-- Main chat area -->
 <div class="main" id="mainArea">
   <div class="welcome" id="welcomeScreen">
-    <h2>🏛️ Multi-Agent Roundtable Meeting System</h2>
-    <p>Click "+ New" to start a roundtable discussion</p>
+    <h2>🏛️ Investment Council</h2>
+    <p>Click &quot;+ New&quot; to start a council meeting</p>
   </div>
 </div>
 
 <script>
 // ============================================================
-// i18n
+// UI strings
 // ============================================================
 const T = {
-  en: {
-    sidebarTitle: '🏛️ Roundtable',
-    newSession: '+ New',
-    welcomeTitle: '🏛️ Multi-Agent Roundtable Meeting System',
-    welcomeDesc: 'Click "+ New" to start a roundtable discussion',
-    newSessionTitle: 'New Meeting',
-    placeholderTopic: 'Enter discussion topic...',
-    placeholderChat: 'Ask the Committee Chair...',
-    send: 'Send',
-    stop: '⏹ Stop',
-    searchLabel: '🔍 Web Search',
-    advancedOptions: '⚙ Advanced Options',
-    goalPlaceholder: 'Goal (optional)',
-    bgPlaceholder: 'Background (optional, web search can auto-fill)',
-    constraintsPlaceholder: 'Constraints (optional, one per line)',
-    discussing: 'Discussing...',
-    meetingDoneChat: 'Meeting ended · Continue chatting',
-    deleteTitle: 'Delete',
-    thinking: 'Thinking',
-    searchResults: 'Web Search Results',
-    meetingStarting: 'Meeting starting, preparing...',
-    userAvatar: 'Me',
-    moderatorInitial: 'C',
-    searchTooltip: 'When enabled, the Committee Chair will auto-search for background info before the meeting',
-    connError: 'Connection failed. Please check the server.',
-  },
-  zh: {
-    sidebarTitle: '🏛️ 圆桌会议',
-    newSession: '+ 新会议',
-    welcomeTitle: '🏛️ 多Agent圆桌会议系统',
-    welcomeDesc: '点击「+ 新会议」开始一场圆桌讨论',
-    newSessionTitle: '新会议',
-    placeholderTopic: '输入讨论议题...',
-    placeholderChat: '向委员会主席提问...',
-    send: '发送',
-    stop: '⏹ 停止',
-    searchLabel: '🔍 联网搜索',
-    advancedOptions: '⚙ 高级选项',
-    goalPlaceholder: '目标 (可选)',
-    bgPlaceholder: '背景信息 (可选，勾选联网搜索可自动补充)',
-    constraintsPlaceholder: '约束条件 (可选，每行一个)',
-    discussing: '讨论中...',
-    meetingDoneChat: '会议已结束 · 可继续对话',
-    deleteTitle: '删除',
-    thinking: '正在思考',
-    searchResults: '网络搜索结果',
-    meetingStarting: '会议开始，正在准备...',
-    userAvatar: '我',
-    moderatorInitial: '主',
-    searchTooltip: '启用后，委员会主席将在会议前自动搜索相关背景信息',
-    connError: '连接失败，请检查服务器。',
-  },
+  sidebarTitle: '🏛️ Investment Council',
+  newSession: '+ New',
+  welcomeTitle: '🏛️ Investment Council',
+  welcomeDesc: 'Click "+ New" to start a council meeting',
+  newSessionTitle: 'New Meeting',
+  placeholderTopic: 'Enter discussion topic...',
+  placeholderChat: 'Ask the Committee Chair...',
+  send: 'Send',
+  stop: '⏹ Stop',
+  searchLabel: '🔍 Web Search',
+  advancedOptions: '⚙ Advanced Options',
+  goalPlaceholder: 'Goal (optional)',
+  bgPlaceholder: 'Background (optional, web search can auto-fill)',
+  constraintsPlaceholder: 'Constraints (optional, one per line)',
+  discussing: 'Discussing...',
+  meetingDoneChat: 'Meeting ended · Continue chatting',
+  deleteTitle: 'Delete',
+  thinking: 'Thinking',
+  searchResults: 'Web Search Results',
+  meetingStarting: 'Meeting starting, preparing...',
+  userAvatar: 'Me',
+  moderatorInitial: 'C',
+  searchTooltip: 'When enabled, the Committee Chair will auto-search for background info before the meeting',
+  connError: 'Connection failed. Please check the server.',
 };
-let currentLang = localStorage.getItem('rt_lang') || 'en';
-function t(key) { return T[currentLang][key] || T['en'][key] || key; }
-function toggleLang() {
-  currentLang = currentLang === 'en' ? 'zh' : 'en';
-  localStorage.setItem('rt_lang', currentLang);
-  applyLang();
-}
-function applyLang() {
-  document.getElementById('sidebarTitle').textContent = t('sidebarTitle');
-  document.getElementById('btnNewSession').textContent = t('newSession');
-  document.getElementById('btnLang').textContent = currentLang === 'en' ? '中文' : 'EN';
-  document.title = currentLang === 'en' ? 'Roundtable Meeting System' : '圆桌会议系统';
-  // Re-render current view to apply translations
-  if (activeSessionId) renderChatView();
-  else {
-    const main = document.getElementById('mainArea');
-    main.innerHTML = `<div class="welcome"><h2>${t('welcomeTitle')}</h2><p>${t('welcomeDesc')}</p></div>`;
-  }
-}
+function t(key) { return T[key] || key; }
 
 // ============================================================
 // State
@@ -976,7 +917,6 @@ if (loadSessions()) {
 } else {
   newSession();
 }
-applyLang();
 </script>
 </body>
 </html>

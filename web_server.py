@@ -1,4 +1,4 @@
-"""FastAPI web server with WebSocket for the Roundtable Meeting System."""
+"""FastAPI web server with WebSocket for the Investment Council."""
 
 import asyncio
 import logging
@@ -82,7 +82,7 @@ async def lifespan(target_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Roundtable Meeting System", lifespan=lifespan)
+app = FastAPI(title="Investment Council", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -185,7 +185,7 @@ async def _research_phase(
     for i in range(MAX_SEARCH_ROUNDS):
         # Ask the chair to generate a search query
         prompt = (
-            f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting. You need to search a news database for background information on the upcoming topic.\n\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting. You need to search a news database for background information on the upcoming topic.\n\n"
             f"Topic: {topic}\n"
         )
         if existing_background:
@@ -303,9 +303,9 @@ async def _research_phase(
             await send_event({"type": "system", "content": f"Search failed: {e}"})
 
     if collected_info:
-        await send_event({"type": "system", "content": f"🔍 Search complete ({len(searched_queries)} searches). Starting roundtable meeting..."})
+        await send_event({"type": "system", "content": f"🔍 Search complete ({len(searched_queries)} searches). Starting council meeting..."})
     else:
-        await send_event({"type": "system", "content": "🔍 No useful information found, starting roundtable meeting directly..."})
+        await send_event({"type": "system", "content": "🔍 No useful information found, starting council meeting directly..."})
 
     return "\n\n".join(collected_info)
 
@@ -395,7 +395,7 @@ async def _chat_with_moderator(
         )
 
         system_prompt = (
-            f"You are the {MODERATOR_DISPLAY_NAME} of a roundtable meeting that just ended. Below is the full meeting transcript.\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting that just ended. Below is the full meeting transcript.\n"
             "The user has follow-up questions about the meeting. Answer based on the transcript.\n"
             "Stay neutral, accurate, and concise. If the user asks about something not discussed, say so.\n\n"
             + f"=== Meeting Record ===\n{meeting_history}\n=== End of Record ==="

@@ -1,4 +1,4 @@
-"""Prompt templates for the Roundtable Meeting System V1.
+"""Prompt templates for the Investment Council.
 
 Templates are English only. The generic language instruction
 (i18n.LANG_FOLLOW_INSTRUCTION) is appended to every prompt so the model
@@ -25,7 +25,7 @@ EXPERT_INTRODUCTION_FIXED = (
 
 _PROMPTS: dict[str, str] = {
     "MODERATOR_OPENING": """\
-You are the Committee Chair of this roundtable meeting.
+You are the Committee Chair of this council meeting.
 Complete the opening based on the user's topic:
 1. Restate the topic
 2. State the goals of this meeting
@@ -44,7 +44,7 @@ User topic: {topic}
 {background_section}
 """,
     "EXPERT_ROUND1": """\
-You are one of the experts in this roundtable meeting, with role style: {role_label}.
+You are one of the experts in this council meeting, with role style: {role_label}.
 This is round 1 — please independently state your initial views.
 Requirements:
 1. State your core position
@@ -71,7 +71,7 @@ Committee Chair opening:
 {opening}
 """,
     "EXPERT_ROUND2": """\
-You are one of the experts in this roundtable meeting, with role style: {role_label}.
+You are one of the experts in this council meeting, with role style: {role_label}.
 You can now see the other experts' round 1 points.
 Please make your round 2 statement and complete all three of the following:
 1. Propose 1-2 new points
@@ -112,7 +112,7 @@ Committee Chair summary:
 {moderator_summary}
 """,
     "EXPERT_ROUND3": """\
-You are one of the experts in this roundtable meeting, with role style: {role_label}.
+You are one of the experts in this council meeting, with role style: {role_label}.
 You can now see the round 2 critiques directed at you, plus the new discussion across the room.
 Please make your round 3 statement and complete the following:
 1. Respond to the strongest attack against you
@@ -147,7 +147,7 @@ Attacks directed at you ({agent_name}):
 {attacks_on_me}
 """,
     "EXPERT_ROUND4": """\
-You are one of the experts in this roundtable meeting, with role style: {role_label}.
+You are one of the experts in this council meeting, with role style: {role_label}.
 This is the supplementary round (round 4). Discuss ONLY the following key unresolved issues:
 
 {focused_issues}
@@ -169,7 +169,7 @@ Highly compressed summary of the first three rounds:
 {compressed_summary}
 """,
     "MODERATOR_SUMMARY": """\
-You are the Committee Chair of the roundtable meeting.
+You are the Committee Chair of the council meeting.
 Summarize round {round_index} of the discussion and complete the following tasks:
 1. Summarize the key new points of this round
 2. Summarize the strongest attacks of this round
@@ -204,7 +204,7 @@ Each expert's statement this round:
 {previous_context}
 """,
     "MODERATOR_FINAL": """\
-You are the Committee Chair of this roundtable meeting.
+You are the Committee Chair of this council meeting.
 Based on all rounds, output the final summary report.
 
 Output in the following JSON format (output nothing else):
