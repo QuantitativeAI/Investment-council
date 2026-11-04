@@ -5,6 +5,7 @@ server (default http://127.0.0.1:8081/mcp, override with MCP_LIVE_TEST_URL)
 and skips itself when the server is unreachable.
 """
 
+import asyncio
 import os
 from types import SimpleNamespace
 
@@ -178,7 +179,17 @@ async def test_expert_can_call_mcp_tool(monkeypatch):
 async def test_live_mcp_server_roundtrip():
     """Connect to a real MCP server, list tools, and call one. Skips if down."""
     url = os.environ.get("MCP_LIVE_TEST_URL", "http://127.0.0.1:8081/mcp")
-    gateway = McpGateway([McpServerConfig(name="livetest", url=url, timeout=15)])
+    # Quick connectivity check before creating the gateway
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(url, follow_redirects=True)
+            if resp.status_code >= 400:
+                pytest.skip(f"MCP live server returned HTTP {resp.status_code} at {url}")
+    except Exception:
+        pytest.skip(f"MCP live server not reachable at {url}")
+
+    gateway = McpGateway([McpServerConfig(name="livetest", url=url, timeout=10)])
     await gateway.start()
     if not gateway.connected:
         pytest.skip(f"MCP live server not reachable at {url}")
