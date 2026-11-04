@@ -34,6 +34,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# The MCP SDK's httpx2 client logs every request at INFO — including harmless
+# 405s from POST-only servers that reject the SDK's optional GET SSE stream —
+# and the SDK logs GET reconnect chatter at INFO too. Keep our own mcp_gateway
+# logger at INFO for real status messages.
+logging.getLogger("httpx2").setLevel(logging.WARNING)
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Active meetings: session_id -> StreamingMeeting
@@ -158,8 +164,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         # Keep _meeting_histories — it persists for reconnections
 
 
-MAX_SEARCH_ROUNDS = 20
+MAX_SEARCH_ROUNDS = 8
 RESEARCH_MAX_RESULTS = 20
+
+
+def _extract_json(s: str) -> str:
+    """Extract a JSON object from a string that may have trailing text."""
+    start = s.find("{")
+    if start < 0:
+        return s
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return s[start:]
 
 
 async def _research_phase(
@@ -167,13 +189,30 @@ async def _research_phase(
     existing_background: str | None,
     send_event,
 ) -> str:
-    """Moderator researches the topic using Tavily, up to MAX_SEARCH_ROUNDS searches."""
+    """Moderator researches the topic using Tavily and/or MCP tools, up to MAX_SEARCH_ROUNDS searches."""
+    import json as _json
     config = _get_runtime_config()
     moderator_client = AsyncOpenAI(
         api_key=config.moderator_llm.api_key,
         base_url=config.moderator_llm.base_url or None,
     )
     model = config.moderator_llm.model
+
+    # Connect to MCP servers for fallback research
+    mcp_servers = load_mcp_servers()
+    mcp_gateway = None
+    mcp_catalog = []
+    if mcp_servers:
+        mcp_gateway = McpGateway(mcp_servers)
+        await mcp_gateway.start()
+        mcp_catalog = mcp_gateway.catalog()
+
+    search_available = get_search_api_url() is not None or get_web_search_api_url() is not None
+    if not search_available and not mcp_catalog:
+        await send_event({"type": "system", "content": "🔍 No search backend or MCP tools configured — skipping research."})
+        if mcp_gateway:
+            await mcp_gateway.close()
+        return ""
 
     collected_info: list[str] = []
     searched_queries: list[str] = []
@@ -182,10 +221,14 @@ async def _research_phase(
     no_progress_rounds = 0
     last_feedback: str | None = None
     keyword_searches = 0
+    search_failed = False
 
     await send_event({"type": "system", "content": f"🔍 The {MODERATOR_DISPLAY_NAME} is searching for background information..."})
 
-    system_prompt, instructions = build_research_prompt(is_local_news_api_configured())
+    from datetime import date as _date
+    system_prompt, instructions = build_research_prompt(
+        is_local_news_api_configured(), mcp_catalog, _date.today().isoformat()
+    )
 
     for i in range(MAX_SEARCH_ROUNDS):
         # Ask the chair to generate a search query
@@ -196,11 +239,17 @@ async def _research_phase(
         if existing_background:
             prompt += f"User-provided background: {existing_background}\n"
         if collected_info:
-            prompt += f"\nCollected information so far:\n{''.join(collected_info[-3:])}\n"
+            # Trim each item to 300 chars to keep prompt bounded
+            truncated = [item[:300] for item in collected_info[-3:]]
+            prompt += f"\nCollected information so far:\n{''.join(truncated)}\n"
         if searched_queries:
-            prompt += f"\nPreviously executed search/browse commands: {', '.join(searched_queries)}\n"
+            # Show only last 5, each truncated to 80 chars
+            recent = [q[:80] for q in searched_queries[-5:]]
+            prompt += f"\nPreviously executed: {', '.join(recent)}\n"
         if last_feedback:
             prompt += f"\nLast search feedback: {last_feedback}\n"
+        if search_failed:
+            prompt += "\nNote: Previous search backends failed. You can still use MCP tools (listed above) to gather information.\n"
 
         prompt += instructions
 
@@ -221,6 +270,43 @@ async def _research_phase(
         if not query or query.upper() == "DONE":
             await send_event({"type": "system", "content": f"🔍 The {MODERATOR_DISPLAY_NAME} determined information is sufficient."})
             break
+
+        # Truncate oversized queries to avoid API length limits
+        MAX_QUERY_LEN = 1000
+        if len(query) > MAX_QUERY_LEN:
+            query = query[:MAX_QUERY_LEN].rsplit(" ", 1)[0] + "..."
+            await send_event({"type": "system", "content": f"🔍 Query truncated to {len(query)} chars"})
+
+        # Check for MCP tool call: TOOL:<server>.<tool>:<json_args>
+        if query.startswith("TOOL:"):
+            tool_part = query[5:].strip()
+            colon_idx = tool_part.find(":")
+            if colon_idx > 0:
+                tool_spec = tool_part[:colon_idx]
+                args_raw = tool_part[colon_idx + 1:].strip()
+                # Extract JSON object in case the model appended extra text after it
+                args_json = _extract_json(args_raw)
+                parts = tool_spec.split(".", 1)
+                if len(parts) == 2:
+                    server_name, tool_name = parts
+                    try:
+                        arguments = _json.loads(args_json) if args_json else {}
+                        await send_event({"type": "search_start", "content": f"🔍 MCP tool call: {tool_spec}({args_json})"})
+                        result = await mcp_gateway.call_tool(server_name, tool_name, arguments)
+                        collected_info.append(result.get("summary", ""))
+                        await send_event({
+                            "type": "search_result",
+                            "content": result.get("summary", ""),
+                            "result_count": result.get("result_count", 0),
+                        })
+                        no_progress_rounds = 0
+                        last_feedback = None
+                        continue
+                    except Exception as e:
+                        logger.warning("Research MCP call failed: %s", e)
+                        last_feedback = f"MCP tool call failed: {e}. Try a different tool or reply DONE."
+                        await send_event({"type": "system", "content": f"🔍 {last_feedback}"})
+                        continue
 
         command = parse_research_command(query)
         backend = command["backend"]
@@ -293,8 +379,8 @@ async def _research_phase(
                     f"Command {query} produced no new news items. Do not repeat it; use a different category or reply DONE."
                 )
                 await send_event({"type": "system", "content": f"🔍 {last_feedback}"})
-                if no_progress_rounds >= 2:
-                    await send_event({"type": "system", "content": "🔍 Two consecutive searches produced no new information. Stopping."})
+                if no_progress_rounds >= 1:
+                    await send_event({"type": "system", "content": "🔍 Previous search produced no new information. Stopping."})
                     break
         except Exception as e:
             logger.warning("Search failed for query '%s': %s", query, e)
@@ -303,7 +389,17 @@ async def _research_phase(
             if any(marker in error_text for marker in ("401", "403", "unauthorized", "api key")):
                 message += " The search backend rejected the request — check TAVILY_API_KEY (or your search API configuration) in .env."
             await send_event({"type": "system", "content": message})
-            break
+            search_failed = True
+            last_feedback = (
+                f"Search backend failed: {e}. "
+                + ("You can use MCP tools listed above as an alternative. " if mcp_catalog else "")
+                + "Reply DONE when you have enough information, or use an MCP tool."
+            )
+            await send_event({"type": "system", "content": f"🔍 {last_feedback}"})
+            continue
+
+    if mcp_gateway:
+        await mcp_gateway.close()
 
     if collected_info:
         await send_event({"type": "system", "content": f"🔍 Search complete ({len(searched_queries)} searches). Starting council meeting..."})
@@ -346,7 +442,15 @@ async def _run_meeting_task(
             background=combined_background or None,
         )
 
+        # Connect MCP servers (independent of the search toggle)
+        mcp_servers = load_mcp_servers()
+        if mcp_servers:
+            mcp_gateway = McpGateway(mcp_servers)
+            await mcp_gateway.start()
+
         moderator = ModeratorAgent(provider=config.moderator_llm)
+        if mcp_gateway is not None and mcp_gateway.has_tools():
+            moderator.tool_gateway = mcp_gateway
 
         # Experts come from markdown definitions in agents/ (or built-in defaults)
         experts = build_expert_agents(config)
@@ -356,15 +460,9 @@ async def _run_meeting_task(
             for expert in experts:
                 expert.search_fn = skill_web_search
 
-        # Connect MCP servers (independent of the search toggle); experts may
-        # call their tools during the meeting.
-        mcp_servers = load_mcp_servers()
-        if mcp_servers:
-            mcp_gateway = McpGateway(mcp_servers)
-            await mcp_gateway.start()
-            if mcp_gateway.has_tools():
-                for expert in experts:
-                    expert.tool_gateway = mcp_gateway
+        if mcp_gateway is not None and mcp_gateway.has_tools():
+            for expert in experts:
+                expert.tool_gateway = mcp_gateway
 
         meeting = StreamingMeeting(
             moderator=moderator,

@@ -20,6 +20,7 @@ afterwards (a ``finally`` block). A server that fails to connect is skipped
 with a warning so one bad server cannot take down the others or the meeting.
 """
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -179,13 +180,19 @@ class McpGateway:
             for key in ("session_cm", "client_cm"):
                 cm = entry.get(key)
                 if cm is not None:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(Exception, RuntimeError):
                         await cm.__aexit__(None, None, None)
             http_client = entry.get("http_client")
             if http_client is not None:
                 with contextlib.suppress(Exception):
                     await http_client.aclose()
         self._live.clear()
+        # Yield control briefly to let any MCP SDK background tasks settle.
+        # The streamable_http client spawns background tasks that can raise
+        # "cancel scope in a different task" errors if the event loop is not
+        # given a chance to process them after the context manager exits.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
 
 def _describe_arguments(input_schema: Any) -> Optional[str]:

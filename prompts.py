@@ -27,7 +27,7 @@ _PROMPTS: dict[str, str] = {
     "MODERATOR_OPENING": """\
 You are the Committee Chair of this council meeting.
 Complete the opening based on the user's topic:
-1. Restate the topic
+1. Restate the topic, incorporating any background research findings to make it specific and current
 2. State the goals of this meeting
 3. Give the criteria for judging a good answer
 4. Explain the round rules
@@ -37,6 +37,7 @@ The participating experts and their roles are:
 
 Stay neutral, concise, and structured.
 Do not give the final answer in advance.
+Use the background research to frame the discussion with specific, current context — reference key findings, recent developments, or outstanding questions from the research.
 
 User topic: {topic}
 {goal_section}

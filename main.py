@@ -17,6 +17,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# The MCP SDK's httpx2 client logs every request at INFO — including harmless
+# 405s from POST-only servers that reject the SDK's optional GET SSE stream —
+# and the SDK logs GET reconnect chatter at INFO too. Keep our own mcp_gateway
+# logger at INFO for real status messages.
+logging.getLogger("httpx2").setLevel(logging.WARNING)
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 def _render_final_report_markdown(report) -> str:
@@ -54,8 +60,29 @@ def _render_final_report_markdown(report) -> str:
     return "\n".join(lines)
 
 
+def _extract_json(s: str) -> str:
+    """Extract a JSON object from a string that may have trailing text.
+
+    The LLM sometimes appends explanatory text after the JSON arguments in a
+    TOOL: call. This finds the first '{' and matching '}' to isolate valid JSON.
+    """
+    start = s.find("{")
+    if start < 0:
+        return s
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return s[start:]
+
+
 async def _research_phase_cli(topic: str, background: str | None, env_path: str | None = None) -> str:
     """Run the research phase via CLI, similar to web_server._research_phase."""
+    import json as _json
     from openai import AsyncOpenAI
     from search import (
         build_research_prompt,
@@ -68,8 +95,20 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
         web_search,
     )
 
-    if not get_search_api_url() and not get_web_search_api_url():
-        logger.warning("No search backend configured — skipping web search")
+    # Connect to MCP servers for fallback research
+    mcp_servers = load_mcp_servers()
+    mcp_gateway = None
+    mcp_catalog = []
+    if mcp_servers:
+        mcp_gateway = McpGateway(mcp_servers)
+        await mcp_gateway.start()
+        mcp_catalog = mcp_gateway.catalog()
+
+    search_available = get_search_api_url() is not None or get_web_search_api_url() is not None
+    if not search_available and not mcp_catalog:
+        logger.warning("No search backend or MCP tools configured — skipping web search")
+        if mcp_gateway:
+            await mcp_gateway.close()
         return ""
 
     config = load_config(env_path)
@@ -79,7 +118,7 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
     )
     model = config.moderator_llm.model
 
-    max_searches = 20
+    max_searches = 8
     research_max_results = 20
     collected_info: list[str] = []
     searched_queries: list[str] = []
@@ -88,10 +127,14 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
     no_progress_rounds = 0
     last_feedback: str | None = None
     keyword_searches = 0
+    search_failed = False
 
     print(f"🔍 The {MODERATOR_DISPLAY_NAME} is researching background information...")
 
-    system_prompt, instructions = build_research_prompt(is_local_news_api_configured())
+    from datetime import date as _date
+    system_prompt, instructions = build_research_prompt(
+        is_local_news_api_configured(), mcp_catalog, _date.today().isoformat()
+    )
 
     for i in range(max_searches):
         prompt = (
@@ -101,11 +144,17 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
         if background:
             prompt += f"User-provided background: {background}\n"
         if collected_info:
-            prompt += f"\nCollected information so far:\n{''.join(collected_info[-3:])}\n"
+            # Trim each item to 300 chars to keep prompt bounded
+            truncated = [item[:300] for item in collected_info[-3:]]
+            prompt += f"\nCollected information so far:\n{''.join(truncated)}\n"
         if searched_queries:
-            prompt += f"\nPreviously executed search/browse commands: {', '.join(searched_queries)}\n"
+            # Show only last 5, each truncated to 80 chars
+            recent = [q[:80] for q in searched_queries[-5:]]
+            prompt += f"\nPreviously executed: {', '.join(recent)}\n"
         if last_feedback:
             prompt += f"\nLast search feedback: {last_feedback}\n"
+        if search_failed:
+            prompt += "\nNote: Previous search backends failed. You can still use MCP tools (listed above) to gather information.\n"
         prompt += instructions
 
         try:
@@ -125,6 +174,39 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
         if not query or query.upper() == "DONE":
             print(f"🔍 The {MODERATOR_DISPLAY_NAME} determined information is sufficient.")
             break
+
+        # Truncate oversized queries to avoid API length limits
+        MAX_QUERY_LEN = 1000
+        if len(query) > MAX_QUERY_LEN:
+            query = query[:MAX_QUERY_LEN].rsplit(" ", 1)[0] + "..."
+            print(f"🔍 Query truncated to {len(query)} chars")
+
+        # Check for MCP tool call: TOOL:<server>.<tool>:<json_args>
+        if query.startswith("TOOL:"):
+            tool_part = query[5:].strip()
+            colon_idx = tool_part.find(":")
+            if colon_idx > 0:
+                tool_spec = tool_part[:colon_idx]
+                args_raw = tool_part[colon_idx + 1:].strip()
+                # Extract JSON object in case the model appended extra text after it
+                args_json = _extract_json(args_raw)
+                parts = tool_spec.split(".", 1)
+                if len(parts) == 2:
+                    server_name, tool_name = parts
+                    try:
+                        arguments = _json.loads(args_json) if args_json else {}
+                        print(f"🔍 MCP tool call: {tool_spec}({args_json})")
+                        result = await mcp_gateway.call_tool(server_name, tool_name, arguments)
+                        collected_info.append(result.get("summary", ""))
+                        print(f"  → {result.get('summary', '')[:200]}")
+                        no_progress_rounds = 0
+                        last_feedback = None
+                        continue
+                    except Exception as e:
+                        logger.warning("Research MCP call failed: %s", e)
+                        print(f"🔍 MCP tool call failed: {e}")
+                        last_feedback = f"MCP tool call failed: {e}. Try a different tool or reply DONE."
+                        continue
 
         command = parse_research_command(query)
         backend = command["backend"]
@@ -191,8 +273,8 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
                     "use a different category or reply DONE."
                 )
                 print(f"  → {last_feedback}")
-                if no_progress_rounds >= 2:
-                    print("🔍 Two consecutive searches produced no new information. Stopping.")
+                if no_progress_rounds >= 1:
+                    print("🔍 Previous search produced no new information. Stopping.")
                     break
         except Exception as e:
             logger.warning("Search failed for query '%s': %s", query, e)
@@ -201,7 +283,18 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
             if any(marker in error_text for marker in ("401", "403", "unauthorized", "api key")):
                 message += " The search backend rejected the request — check TAVILY_API_KEY (or your search API configuration) in .env."
             print(message)
-            break
+            search_failed = True
+            # Give the model a hint to try MCP tools instead
+            last_feedback = (
+                f"Search backend failed: {e}. "
+                + ("You can use MCP tools listed above as an alternative. " if mcp_catalog else "")
+                + "Reply DONE when you have enough information, or use an MCP tool."
+            )
+            print(f"🔍 {last_feedback}")
+            continue
+
+    if mcp_gateway:
+        await mcp_gateway.close()
 
     if collected_info:
         print(f"🔍 Research complete ({len(searched_queries)} searches). Starting meeting...\n")
@@ -256,8 +349,17 @@ async def run_meeting(
         background=combined_background or None,
     )
 
+    # Connect MCP servers (independent of the search toggle)
+    mcp_servers = load_mcp_servers()
+    mcp_gateway = None
+    if mcp_servers:
+        mcp_gateway = McpGateway(mcp_servers)
+        await mcp_gateway.start()
+
     # Moderator uses its own dedicated LLM
     moderator = ModeratorAgent(provider=config.moderator_llm)
+    if mcp_gateway is not None and mcp_gateway.has_tools():
+        moderator.tool_gateway = mcp_gateway
 
     # Experts: explicit override > markdown definitions in agents/ > built-in defaults
     if expert_configs:
@@ -277,17 +379,6 @@ async def run_meeting(
         for expert in experts:
             expert.search_fn = skill_web_search
 
-    # Connect MCP servers (independent of the search toggle); experts may call
-    # their tools during the meeting.
-    mcp_servers = load_mcp_servers()
-    mcp_gateway = None
-    if mcp_servers:
-        mcp_gateway = McpGateway(mcp_servers)
-        await mcp_gateway.start()
-        if mcp_gateway.has_tools():
-            for expert in experts:
-                expert.tool_gateway = mcp_gateway
-
     for expert in experts:
         logger.info(
             "Expert [%s] using provider: %s (%s)",
@@ -302,6 +393,7 @@ async def run_meeting(
         )
         final_report = await meeting.run(meeting_input)
     finally:
+        # Also close MCP gateway if it was created here (not already closed by meeting)
         if mcp_gateway is not None:
             await mcp_gateway.close()
 

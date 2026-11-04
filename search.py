@@ -490,7 +490,11 @@ async def search_for_topic(topic: str, api_key: Optional[str] = None) -> str:
     return result.get("summary", "")
 
 
-def build_research_prompt(has_local_news: bool) -> tuple[str, str]:
+def build_research_prompt(
+    has_local_news: bool,
+    mcp_catalog: Optional[list] = None,
+    current_date: Optional[str] = None,
+) -> tuple[str, str]:
     """Build ``(system_prompt, instructions)`` for the pre-meeting research phase.
 
     The prompt adapts to the configured backends: with the local news database
@@ -498,6 +502,16 @@ def build_research_prompt(has_local_news: bool) -> tuple[str, str]:
     gets news-keyword, ``WEB:`` and ``FETCH:`` modes.
     """
     language_rule = "Write all search queries in the same language as the user's topic.\n"
+    date_hint = f"The current date is {current_date}."
+    mcp_section = ""
+    if mcp_catalog:
+        mcp_lines = ["\nYou also have access to MCP tools as a fallback when search backends fail."]
+        for server_name, tools in mcp_catalog:
+            for tool in tools:
+                desc = " ".join((getattr(tool, "description", "") or "").split())
+                mcp_lines.append(f"- {server_name}.{tool.name}: {desc}")
+        mcp_section = "\n".join(mcp_lines) + "\n"
+        mcp_section += 'To call an MCP tool, reply with: TOOL:<server_name>.<tool_name>:<json_arguments>\n'
     if has_local_news:
         system = (
             "You are a research assistant. You have five modes: 1) one-word local news keyword search; "
@@ -507,14 +521,16 @@ def build_research_prompt(has_local_news: bool) -> tuple[str, str]:
             "Do not repeat commands. Use WEB: or FETCH: when you need announcements or fundamentals beyond the local database."
         )
         instructions = (
-            "\nPlease decide whether more searching is needed. Local search is unlimited — search as much as you need.\n"
+            "\nPlease decide whether more searching is needed. Aim for 2-4 searches total — stop when you have sufficient context for the meeting.\n"
             "If information is sufficient, reply: DONE\n"
             "If more search is needed, reply in exactly one of these forms: 1) one local-news keyword; 2) ALL; 3) RECENT:category; 4) WEB:search terms; 5) FETCH:url. Do not reply with sentences.\n"
             "Available categories include: china_finance, finance, international, tech, defense, asia, europe, research, middle_east.\n"
             + language_rule
             + "Important: do not repeat any command that has already been executed. If ALL or RECENT:china_finance has already been used, switch to another category or reply DONE.\n"
             "Strategy: use local-news keywords for recent market news; use WEB: for fundamentals, announcements, and research; when you already have a valuable URL, use FETCH:url to read the page.\n"
-            "Start with 1-2 keyword searches by default. Do not use ALL or RECENT first. Local browse mode should be used only after local keyword misses or for broad market overview; WEB: may be used directly when external information is clearly needed."
+            "Start with 1-2 keyword searches by default. Do not use ALL or RECENT first. Local browse mode should be used only after local keyword misses or for broad market overview; WEB: may be used directly when external information is clearly needed.\n"
+            "After 3-4 searches, strongly prefer to reply DONE unless you are missing a specific piece of information.\n"
+            "CRITICAL: Your entire response must be 100 characters or fewer. Do not repeat previous queries. Do not explain your reasoning. Just output the search command or DONE."
         )
     else:
         system = (
@@ -524,13 +540,18 @@ def build_research_prompt(has_local_news: bool) -> tuple[str, str]:
             "Do not repeat commands. Use WEB: or FETCH: when you need facts beyond recent news."
         )
         instructions = (
-            "\nPlease decide whether more searching is needed. Search as much as you need.\n"
+            "\nPlease decide whether more searching is needed. Aim for 2-4 searches total — stop when you have sufficient context for the meeting.\n"
             "If information is sufficient, reply: DONE\n"
             "If more search is needed, reply in exactly one of these forms: 1) a news keyword or short phrase; 2) WEB:search terms; 3) FETCH:url. Do not reply with sentences.\n"
             + language_rule
             + "Important: do not repeat any command that has already been executed.\n"
             "Strategy: use news keywords for recent market and company news; use WEB: for fundamentals, announcements, financial data, and research reports; when you already have a valuable URL, use FETCH:url to read the page.\n"
-            "Start with 1-2 keyword searches by default."
+            + "Start with 1-2 keyword searches by default.\n"
+            "After 3-4 searches, strongly prefer to reply DONE unless you are missing a specific piece of information.\n"
+            "CRITICAL: Your entire response must be 100 characters or fewer. Do not repeat previous queries. Do not explain your reasoning. Just output the search command or DONE."
         )
+    if current_date:
+        instructions = date_hint + "\n" + instructions
+    instructions = mcp_section + instructions
     return system, instructions
 

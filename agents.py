@@ -346,6 +346,10 @@ class ExpertAgent(BaseMeetingAgent):
                             remaining_searches=MAX_AGENT_SEARCHES - executed_searches,
                         )
                     )
+                    if self.tool_gateway is not None and self.tool_gateway.has_tools():
+                        search_history.append(
+                            "\nNote: Search tools are unavailable. You can still gather information using MCP tools listed above in your skill prompt. Each MCP tool call counts toward your tool budget.\n"
+                        )
                     raw = await self._call_llm(prompt + "".join(search_history))
                     content = safe_parse_agent_output(raw, expected_keys + ["search_query", "tool_call"])
                     continue
@@ -438,6 +442,10 @@ class ExpertAgent(BaseMeetingAgent):
                             remaining_searches=remaining_searches,
                         )
                     )
+                    if self.tool_gateway is not None and self.tool_gateway.has_tools():
+                        search_history.append(
+                            "\nNote: Search tools are currently unavailable. You can still gather information using MCP tools listed above in your skill prompt. Each MCP tool call counts toward your tool budget.\n"
+                        )
 
                 if remaining_searches == 0:
                     search_history.append(get_search_prompt("FINAL_ONLY"))
@@ -541,6 +549,9 @@ class ExpertAgent(BaseMeetingAgent):
 class ModeratorAgent(BaseMeetingAgent):
     """The Committee Chair of the council meeting."""
 
+    # Optional MCP gateway exposing connected MCP server tools (mcp_gateway.McpGateway)
+    tool_gateway: Optional[Any] = None
+
     def __init__(
         self,
         provider: LLMProviderConfig,
@@ -549,12 +560,17 @@ class ModeratorAgent(BaseMeetingAgent):
         super().__init__(name, "Arbiter", self._build_system_prompt(), provider)
 
     def _build_system_prompt(self) -> str:
-        return (
+        base = (
             "You are the Committee Chair of a council meeting. Your duties are to guide the "
             "discussion, summarize each round, score every expert, and output a recommended "
             "solution at the end. Stay neutral and do not dive deep into domain analysis yourself."
-            + LANG_FOLLOW_INSTRUCTION
         )
+        if self.tool_gateway is not None and self.tool_gateway.has_tools():
+            base += "\n\nYou also have access to MCP tools that you can use to look up information "
+            base += "during the meeting. To call one, add a \"tool_call\" field to your JSON output: "
+            base += '{"tool_call": {"server": "<server name>", "tool": "<tool name>", "arguments": { ... }}}'
+        base += LANG_FOLLOW_INSTRUCTION
+        return base
 
     async def opening(
         self,
@@ -581,7 +597,45 @@ class ModeratorAgent(BaseMeetingAgent):
             constraints_section=constraints_section,
             background_section=background_section,
         )
-        return await self._call_llm(prompt)
+        return await self._speak_with_tools(prompt, expected_keys=["opening_statement"])
+
+    async def _speak_with_tools(self, prompt: str, expected_keys: list[str]) -> str:
+        """Speak with optional MCP tool calls, returning the final LLM text."""
+        max_tool_calls = 3
+        tool_calls_done = 0
+        while tool_calls_done < max_tool_calls:
+            raw = await self._call_llm(prompt)
+            # Try to extract a tool_call from the response
+            try:
+                parsed = safe_parse_agent_output(raw, expected_keys + ["tool_call"])
+            except Exception:
+                return raw
+            if not isinstance(parsed, dict):
+                return raw
+            tool_call = parsed.pop("tool_call", None)
+            if tool_call is None:
+                return raw
+            # Dispatch the MCP tool call
+            if self.tool_gateway is None:
+                return raw
+            display = ""
+            try:
+                server_name, tool_name, arguments, display, _ = _build_tool_call_request(tool_call)
+                result = await self.tool_gateway.call_tool(server_name, tool_name, arguments)
+                tool_calls_done += 1
+                prompt = prompt + (
+                    f"\n\nYou called tool {display}. Result:\n{result.get('summary', '')}"
+                    + (" [error]" if result.get("is_error") else "")
+                    + "\nNow continue with your response."
+                )
+            except Exception as e:
+                logger.warning("[%s] Moderator MCP call failed: %s", self.name, e)
+                tool_calls_done += 1
+                prompt = prompt + (
+                    f"\n\nYou called tool {display or 'tool_call'}. Error: {e}"
+                    + "\nNow continue with your response."
+                )
+        return raw
 
     async def summarize_and_score(
         self,
