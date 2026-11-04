@@ -51,6 +51,12 @@ def get_web_search_api_url() -> Optional[str]:
     return None
 
 
+def is_local_news_api_configured() -> bool:
+    """True when SEARCH_API_URL points at the local news database."""
+    url = os.environ.get("SEARCH_API_URL", "").strip()
+    return bool(url) and _is_local_news_api(url)
+
+
 def _tavily_base_url_from(url: Optional[str]) -> Optional[str]:
     """Derive a Tavily-client base URL from a configured search URL.
 
@@ -93,11 +99,11 @@ def parse_research_command(command: str) -> dict[str, Optional[str]]:
     """Parse moderator research commands across local news and open web.
 
     Supported commands:
-    - local keyword: A股
+    - local keyword: tariff (any short keyword in the topic's language)
     - local browse all: ALL / RECENT
     - local browse category: RECENT:china_finance
-    - open web search: WEB:鹏鼎控股 世运电路 东方财富
-    - webpage fetch: FETCH:https://finance.eastmoney.com/...
+    - open web search: WEB:Acme Corp Q3 earnings and analyst ratings
+    - webpage fetch: FETCH:https://example.com/report
     """
     normalized = command.strip()
     upper = normalized.upper()
@@ -309,6 +315,34 @@ async def web_search(
     if not normalized_query:
         raise ValueError("Web search requires a non-empty query")
 
+    if _tavily_base_url_from(url) is not None:
+        # Tavily (or Tavily-compatible) endpoint: use the official client,
+        # which sends the API key as a proper credential.
+        client = AsyncTavilyClient(
+            api_key=api_key or get_tavily_api_key(),
+            api_base_url=_tavily_base_url_from(url),
+        )
+        kwargs: dict[str, Any] = {
+            "search_depth": search_depth,
+            "topic": topic,
+            "max_results": max_results,
+            "include_answer": True,
+            "include_raw_content": True,
+        }
+        if topic == "news" and days > 0:
+            kwargs["days"] = days
+        if include_domains:
+            kwargs["include_domains"] = include_domains
+        if exclude_domains:
+            kwargs["exclude_domains"] = exclude_domains
+        try:
+            response = await client.search(query=normalized_query, **kwargs)
+        except Exception as e:
+            logger.error("Tavily web search failed: %s", e)
+            raise
+        return _format_search_response(response.get("results", []), response.get("answer", ""))
+
+    # Custom Tavily-compatible backend: raw request.
     payload: dict[str, Any] = {
         "query": normalized_query,
         "max_results": max_results,
@@ -399,6 +433,29 @@ async def tavily_search(
             days=days,
         )
 
+    if _tavily_base_url_from(url) is not None:
+        # Tavily (or Tavily-compatible) endpoint: use the official client,
+        # which sends the API key as a proper credential.
+        client = AsyncTavilyClient(
+            api_key=api_key or get_tavily_api_key(),
+            api_base_url=_tavily_base_url_from(url),
+        )
+        kwargs: dict[str, Any] = {
+            "search_depth": search_depth,
+            "topic": topic,
+            "max_results": max_results,
+            "include_answer": True,
+        }
+        if topic == "news" and days > 0:
+            kwargs["days"] = days
+        try:
+            response = await client.search(query=normalized_query, **kwargs)
+        except Exception as e:
+            logger.error("Tavily search failed: %s", e)
+            raise
+        return _format_search_response(response.get("results", []), response.get("answer", ""))
+
+    # Local news API: raw request with body-based auth and local filters.
     payload = {
         "query": normalized_query,
         "max_results": max_results,
@@ -407,13 +464,12 @@ async def tavily_search(
         "days": days,
         "include_answer": True,
     }
-    
     if category:
         payload["category"] = category
     if source:
         payload["source"] = source
 
-    # Include api_key only for Tavily (or when explicitly provided)
+    # Include api_key only when explicitly provided (body-based auth).
     key = api_key or get_tavily_api_key()
     if key:
         payload["api_key"] = key
@@ -423,24 +479,79 @@ async def tavily_search(
         resp.raise_for_status()
         data = resp.json()
 
-    results = data.get("results", [])
-    answer = data.get("answer", "")
+    return _format_search_response(data.get("results", []), data.get("answer", ""))
 
-    return _format_search_response(results, answer)
-    
 async def search_for_topic(topic: str, api_key: Optional[str] = None) -> str:
     """Convenience function: search for a topic and return a formatted background string."""
     if not get_search_api_url():
         raise ValueError("No search backend configured. Set SEARCH_API_URL or TAVILY_API_KEY in .env")
 
-    key = api_key or get_tavily_api_key()
-    client = AsyncTavilyClient(api_key=key, api_base_url=_tavily_base_url_from(get_search_api_url()))
-    try:
-        response = await client.search(query=topic, search_depth="advanced", max_results=10)
-        return _format_search_response(
-            response.get("results", []), response.get("answer", "")
-        ).get("summary", "")
-    except Exception as e:
-        logger.error("Tavily search failed: %s", e)
-        raise
+    result = await tavily_search(query=topic, api_key=api_key, max_results=10)
+    return result.get("summary", "")
+
+
+def build_research_prompt(
+    has_local_news: bool,
+    mcp_catalog: Optional[list] = None,
+    current_date: Optional[str] = None,
+) -> tuple[str, str]:
+    """Build ``(system_prompt, instructions)`` for the pre-meeting research phase.
+
+    The prompt adapts to the configured backends: with the local news database
+    available the chair gets keyword/browse/category modes; otherwise it only
+    gets news-keyword, ``WEB:`` and ``FETCH:`` modes.
+    """
+    language_rule = "Write all search queries in the same language as the user's topic.\n"
+    date_hint = f"The current date is {current_date}."
+    mcp_section = ""
+    if mcp_catalog:
+        mcp_lines = ["\nYou also have access to MCP tools as a fallback when search backends fail."]
+        for server_name, tools in mcp_catalog:
+            for tool in tools:
+                desc = " ".join((getattr(tool, "description", "") or "").split())
+                mcp_lines.append(f"- {server_name}.{tool.name}: {desc}")
+        mcp_section = "\n".join(mcp_lines) + "\n"
+        mcp_section += 'To call an MCP tool, reply with: TOOL:<server_name>.<tool_name>:<json_arguments>\n'
+    if has_local_news:
+        system = (
+            "You are a research assistant. You have five modes: 1) one-word local news keyword search; "
+            "2) browse all recent news with ALL; 3) browse recent news by category with RECENT:category; "
+            "4) open-web search with WEB:query; 5) webpage fetch with FETCH:url. "
+            "ALL / RECENT:* go to the local /recent API, WEB: goes to open-web search, and FETCH: reads the page body. "
+            "Do not repeat commands. Use WEB: or FETCH: when you need announcements or fundamentals beyond the local database."
+        )
+        instructions = (
+            "\nPlease decide whether more searching is needed. Aim for 2-4 searches total — stop when you have sufficient context for the meeting.\n"
+            "If information is sufficient, reply: DONE\n"
+            "If more search is needed, reply in exactly one of these forms: 1) one local-news keyword; 2) ALL; 3) RECENT:category; 4) WEB:search terms; 5) FETCH:url. Do not reply with sentences.\n"
+            "Available categories include: china_finance, finance, international, tech, defense, asia, europe, research, middle_east.\n"
+            + language_rule
+            + "Important: do not repeat any command that has already been executed. If ALL or RECENT:china_finance has already been used, switch to another category or reply DONE.\n"
+            "Strategy: use local-news keywords for recent market news; use WEB: for fundamentals, announcements, and research; when you already have a valuable URL, use FETCH:url to read the page.\n"
+            "Start with 1-2 keyword searches by default. Do not use ALL or RECENT first. Local browse mode should be used only after local keyword misses or for broad market overview; WEB: may be used directly when external information is clearly needed.\n"
+            "After 3-4 searches, strongly prefer to reply DONE unless you are missing a specific piece of information.\n"
+            "CRITICAL: Your entire response must be 100 characters or fewer. Do not repeat previous queries. Do not explain your reasoning. Just output the search command or DONE."
+        )
+    else:
+        system = (
+            "You are a research assistant. You have three modes: 1) news search with a short keyword or phrase; "
+            "2) open-web search with WEB:query; 3) webpage fetch with FETCH:url. "
+            "News mode searches recent news, WEB: searches the open web, and FETCH: reads the page body of a URL. "
+            "Do not repeat commands. Use WEB: or FETCH: when you need facts beyond recent news."
+        )
+        instructions = (
+            "\nPlease decide whether more searching is needed. Aim for 2-4 searches total — stop when you have sufficient context for the meeting.\n"
+            "If information is sufficient, reply: DONE\n"
+            "If more search is needed, reply in exactly one of these forms: 1) a news keyword or short phrase; 2) WEB:search terms; 3) FETCH:url. Do not reply with sentences.\n"
+            + language_rule
+            + "Important: do not repeat any command that has already been executed.\n"
+            "Strategy: use news keywords for recent market and company news; use WEB: for fundamentals, announcements, financial data, and research reports; when you already have a valuable URL, use FETCH:url to read the page.\n"
+            + "Start with 1-2 keyword searches by default.\n"
+            "After 3-4 searches, strongly prefer to reply DONE unless you are missing a specific piece of information.\n"
+            "CRITICAL: Your entire response must be 100 characters or fewer. Do not repeat previous queries. Do not explain your reasoning. Just output the search command or DONE."
+        )
+    if current_date:
+        instructions = date_hint + "\n" + instructions
+    instructions = mcp_section + instructions
+    return system, instructions
 

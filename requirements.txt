@@ -6,4 +6,5 @@ websockets>=11.0
 httpx>=0.24.0
 tavily-python>=0.8.0
 PyYAML>=6.0
+mcp>=1.2.0
 

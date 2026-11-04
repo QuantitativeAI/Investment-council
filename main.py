@@ -11,11 +11,18 @@ from meeting import RoundtableMeeting
 from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
 from agent_defs import build_expert_agents
 from skills.web_search import execute as skill_web_search, is_available as skill_search_available
+from mcp_gateway import McpGateway, load_mcp_servers
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# The MCP SDK's httpx2 client logs every request at INFO — including harmless
+# 405s from POST-only servers that reject the SDK's optional GET SSE stream —
+# and the SDK logs GET reconnect chatter at INFO too. Keep our own mcp_gateway
+# logger at INFO for real status messages.
+logging.getLogger("httpx2").setLevel(logging.WARNING)
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 def _render_final_report_markdown(report) -> str:
@@ -53,20 +60,55 @@ def _render_final_report_markdown(report) -> str:
     return "\n".join(lines)
 
 
+def _extract_json(s: str) -> str:
+    """Extract a JSON object from a string that may have trailing text.
+
+    The LLM sometimes appends explanatory text after the JSON arguments in a
+    TOOL: call. This finds the first '{' and matching '}' to isolate valid JSON.
+    """
+    start = s.find("{")
+    if start < 0:
+        return s
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return s[start:]
+
+
 async def _research_phase_cli(topic: str, background: str | None, env_path: str | None = None) -> str:
     """Run the research phase via CLI, similar to web_server._research_phase."""
+    import json as _json
     from openai import AsyncOpenAI
     from search import (
+        build_research_prompt,
         fetch_webpage_content,
         get_search_api_url,
         get_web_search_api_url,
+        is_local_news_api_configured,
         parse_research_command,
         tavily_search,
         web_search,
     )
 
-    if not get_search_api_url() and not get_web_search_api_url():
-        logger.warning("No search backend configured — skipping web search")
+    # Connect to MCP servers for fallback research
+    mcp_servers = load_mcp_servers()
+    mcp_gateway = None
+    mcp_catalog = []
+    if mcp_servers:
+        mcp_gateway = McpGateway(mcp_servers)
+        await mcp_gateway.start()
+        mcp_catalog = mcp_gateway.catalog()
+
+    search_available = get_search_api_url() is not None or get_web_search_api_url() is not None
+    if not search_available and not mcp_catalog:
+        logger.warning("No search backend or MCP tools configured — skipping web search")
+        if mcp_gateway:
+            await mcp_gateway.close()
         return ""
 
     config = load_config(env_path)
@@ -76,7 +118,7 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
     )
     model = config.moderator_llm.model
 
-    max_searches = 20
+    max_searches = 8
     research_max_results = 20
     collected_info: list[str] = []
     searched_queries: list[str] = []
@@ -85,37 +127,41 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
     no_progress_rounds = 0
     last_feedback: str | None = None
     keyword_searches = 0
+    search_failed = False
 
     print(f"🔍 The {MODERATOR_DISPLAY_NAME} is researching background information...")
 
+    from datetime import date as _date
+    system_prompt, instructions = build_research_prompt(
+        is_local_news_api_configured(), mcp_catalog, _date.today().isoformat()
+    )
+
     for i in range(max_searches):
         prompt = (
-            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting. You need to search a news database for background information on the upcoming topic.\n\n"
+            f"You are the {MODERATOR_DISPLAY_NAME} of a council meeting. You need to gather background information on the upcoming topic using the available search tools.\n\n"
             f"Topic: {topic}\n"
         )
         if background:
             prompt += f"User-provided background: {background}\n"
         if collected_info:
-            prompt += f"\nCollected information so far:\n{''.join(collected_info[-3:])}\n"
+            # Trim each item to 300 chars to keep prompt bounded
+            truncated = [item[:300] for item in collected_info[-3:]]
+            prompt += f"\nCollected information so far:\n{''.join(truncated)}\n"
         if searched_queries:
-            prompt += f"\nPreviously executed search/browse commands: {', '.join(searched_queries)}\n"
+            # Show only last 5, each truncated to 80 chars
+            recent = [q[:80] for q in searched_queries[-5:]]
+            prompt += f"\nPreviously executed: {', '.join(recent)}\n"
         if last_feedback:
             prompt += f"\nLast search feedback: {last_feedback}\n"
-        prompt += (
-            "\nPlease decide whether more searching is needed. Local search is unlimited — search as much as you need.\n"
-            "If information is sufficient, reply: DONE\n"
-            "If more search is needed, reply in exactly one of these forms: 1) one local-news keyword; 2) ALL; 3) RECENT:category; 4) WEB:search terms; 5) FETCH:url. Do not reply with sentences.\n"
-            "Available categories include: china_finance, finance, international, tech, defense, asia, europe, research, middle_east.\n"
-            "Important: do not repeat any command that has already been executed. If ALL or RECENT:china_finance has already been used, switch to another category or reply DONE.\n"
-            "Strategy: use local-news keywords for recent market news; use WEB: for fundamentals, Eastmoney/Xueqiu/announcements/research; when you already have a valuable URL, use FETCH:url to read the page.\n"
-            "Start with 1-2 keyword searches by default. Do not use ALL or RECENT first. Local browse mode should be used only after local keyword misses or for broad market overview; WEB: may be used directly when external information is clearly needed."
-        )
+        if search_failed:
+            prompt += "\nNote: Previous search backends failed. You can still use MCP tools (listed above) to gather information.\n"
+        prompt += instructions
 
         try:
             resp = await client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are a research assistant. You have five modes: 1) one-word local news keyword search; 2) browse all recent news with ALL; 3) browse recent news by category with RECENT:category; 4) open-web search with WEB:query; 5) webpage fetch with FETCH:url. ALL / RECENT:* go to the local /recent API, WEB: goes to open-web search, and FETCH: reads the page body. Do not repeat commands. Use WEB: or FETCH: when you need Eastmoney/Xueqiu/announcements/fundamentals beyond the local database."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
@@ -128,6 +174,39 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
         if not query or query.upper() == "DONE":
             print(f"🔍 The {MODERATOR_DISPLAY_NAME} determined information is sufficient.")
             break
+
+        # Truncate oversized queries to avoid API length limits
+        MAX_QUERY_LEN = 1000
+        if len(query) > MAX_QUERY_LEN:
+            query = query[:MAX_QUERY_LEN].rsplit(" ", 1)[0] + "..."
+            print(f"🔍 Query truncated to {len(query)} chars")
+
+        # Check for MCP tool call: TOOL:<server>.<tool>:<json_args>
+        if query.startswith("TOOL:"):
+            tool_part = query[5:].strip()
+            colon_idx = tool_part.find(":")
+            if colon_idx > 0:
+                tool_spec = tool_part[:colon_idx]
+                args_raw = tool_part[colon_idx + 1:].strip()
+                # Extract JSON object in case the model appended extra text after it
+                args_json = _extract_json(args_raw)
+                parts = tool_spec.split(".", 1)
+                if len(parts) == 2:
+                    server_name, tool_name = parts
+                    try:
+                        arguments = _json.loads(args_json) if args_json else {}
+                        print(f"🔍 MCP tool call: {tool_spec}({args_json})")
+                        result = await mcp_gateway.call_tool(server_name, tool_name, arguments)
+                        collected_info.append(result.get("summary", ""))
+                        print(f"  → {result.get('summary', '')[:200]}")
+                        no_progress_rounds = 0
+                        last_feedback = None
+                        continue
+                    except Exception as e:
+                        logger.warning("Research MCP call failed: %s", e)
+                        print(f"🔍 MCP tool call failed: {e}")
+                        last_feedback = f"MCP tool call failed: {e}. Try a different tool or reply DONE."
+                        continue
 
         command = parse_research_command(query)
         backend = command["backend"]
@@ -172,9 +251,10 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
             new_urls = result_urls - seen_urls
 
             if backend == "local" and actual_query and result.get("result_count", 0) == 0:
+                scope = "the local database" if is_local_news_api_configured() else "recent news"
                 last_feedback = (
-                    f"Keyword {query} returned no results. Try another short keyword first; "
-                    "if you need information beyond the local database, use WEB: for Eastmoney/Xueqiu/announcements/research."
+                    f"Keyword {query} returned no results. Try a different short keyword, "
+                    f"or use WEB: for announcements, fundamentals, and research beyond {scope}."
                 )
                 print(f"  → Found 0 results")
                 print(f"  → {last_feedback}")
@@ -193,11 +273,28 @@ async def _research_phase_cli(topic: str, background: str | None, env_path: str 
                     "use a different category or reply DONE."
                 )
                 print(f"  → {last_feedback}")
-                if no_progress_rounds >= 2:
-                    print("🔍 Two consecutive searches produced no new information. Stopping.")
+                if no_progress_rounds >= 1:
+                    print("🔍 Previous search produced no new information. Stopping.")
                     break
         except Exception as e:
             logger.warning("Search failed for query '%s': %s", query, e)
+            message = f"🔍 Search failed: {e}"
+            error_text = str(e).lower()
+            if any(marker in error_text for marker in ("401", "403", "unauthorized", "api key")):
+                message += " The search backend rejected the request — check TAVILY_API_KEY (or your search API configuration) in .env."
+            print(message)
+            search_failed = True
+            # Give the model a hint to try MCP tools instead
+            last_feedback = (
+                f"Search backend failed: {e}. "
+                + ("You can use MCP tools listed above as an alternative. " if mcp_catalog else "")
+                + "Reply DONE when you have enough information, or use an MCP tool."
+            )
+            print(f"🔍 {last_feedback}")
+            continue
+
+    if mcp_gateway:
+        await mcp_gateway.close()
 
     if collected_info:
         print(f"🔍 Research complete ({len(searched_queries)} searches). Starting meeting...\n")
@@ -231,10 +328,13 @@ async def run_meeting(
     """
     config = load_config(env_path)
 
-    # Research phase if search is enabled
+    # Research phase if search is enabled and a backend is configured
     search_background = ""
     if search_enabled:
-        search_background = await _research_phase_cli(topic, background, env_path)
+        if skill_search_available():
+            search_background = await _research_phase_cli(topic, background, env_path)
+        else:
+            print("🔍 No search backend configured (set TAVILY_API_KEY or SEARCH_API_URL). Skipping pre-meeting research.")
 
     combined_background = ""
     if background:
@@ -249,8 +349,17 @@ async def run_meeting(
         background=combined_background or None,
     )
 
+    # Connect MCP servers (independent of the search toggle)
+    mcp_servers = load_mcp_servers()
+    mcp_gateway = None
+    if mcp_servers:
+        mcp_gateway = McpGateway(mcp_servers)
+        await mcp_gateway.start()
+
     # Moderator uses its own dedicated LLM
     moderator = ModeratorAgent(provider=config.moderator_llm)
+    if mcp_gateway is not None and mcp_gateway.has_tools():
+        moderator.tool_gateway = mcp_gateway
 
     # Experts: explicit override > markdown definitions in agents/ > built-in defaults
     if expert_configs:
@@ -276,13 +385,17 @@ async def run_meeting(
             expert.name, expert.provider.name, expert.provider.model,
         )
 
-    meeting = RoundtableMeeting(
-        moderator=moderator,
-        experts=experts,
-        max_rounds=max_rounds,
-    )
-
-    final_report = await meeting.run(meeting_input)
+    try:
+        meeting = RoundtableMeeting(
+            moderator=moderator,
+            experts=experts,
+            max_rounds=max_rounds,
+        )
+        final_report = await meeting.run(meeting_input)
+    finally:
+        # Also close MCP gateway if it was created here (not already closed by meeting)
+        if mcp_gateway is not None:
+            await mcp_gateway.close()
 
     # Output as markdown
     if final_report.raw_markdown and not final_report.problem_definition:

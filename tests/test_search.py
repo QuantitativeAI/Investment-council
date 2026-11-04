@@ -123,36 +123,78 @@ def test_parse_research_command_supports_web_and_fetch_modes():
     }
 
 
+class FakeTavilyClient:
+    def __init__(self, api_key=None, api_base_url=None):
+        self.api_key = api_key
+        self.api_base_url = api_base_url
+        self.search_kwargs = None
+
+    async def search(self, query, **kwargs):
+        self.search_kwargs = {"query": query, **kwargs}
+        return {
+            "results": [
+                {
+                    "title": "Tavily result",
+                    "url": "https://example.com/r",
+                    "content": "content",
+                }
+            ],
+            "answer": "answer",
+        }
+
+
+def _patch_tavily(monkeypatch, created: dict):
+    def build_tavily_client(api_key=None, api_base_url=None):
+        client = FakeTavilyClient(api_key=api_key, api_base_url=api_base_url)
+        created["client"] = client
+        return client
+
+    def fail_httpx(*args, **kwargs):
+        raise AssertionError("raw httpx should not be used for the Tavily endpoint")
+
+    monkeypatch.setattr(search, "AsyncTavilyClient", build_tavily_client)
+    monkeypatch.setattr(search.httpx, "AsyncClient", fail_httpx)
+
+
 @pytest.mark.anyio
 async def test_web_search_uses_open_web_backend(monkeypatch):
     monkeypatch.setattr(search, "get_web_search_api_url", lambda: "https://api.tavily.com/search")
     monkeypatch.setattr(search, "get_tavily_api_key", lambda: "test-key")
+    created: dict = {}
+    _patch_tavily(monkeypatch, created)
 
-    def build_client(*args, **kwargs):
-        return FakeAsyncClient(
-            post_response=lambda url, json, **kw: FakeResponse(
-                {
-                    "query": json["query"],
-                    "answer": "answer",
-                    "results": [
-                        {
-                            "title": "Eastmoney result",
-                            "url": "https://example.com/eastmoney",
-                            "content": "content",
-                        }
-                    ],
-                    "response_time": 0.01,
-                }
-            ),
-            get_response=lambda url, params, **kw: (_ for _ in ()).throw(AssertionError("GET should not be used for web search")),
-        )
-
-    monkeypatch.setattr(search.httpx, "AsyncClient", build_client)
-
-    result = await search.web_search(query="鹏鼎控股 世运电路 东方财富", max_results=3)
+    result = await search.web_search(
+        query="central bank rate decision",
+        max_results=3,
+        include_domains=["example.com"],
+    )
 
     assert result["result_count"] == 1
-    assert "Eastmoney result" in result["summary"]
+    assert "Tavily result" in result["summary"]
+    client = created["client"]
+    assert client.api_key == "test-key"
+    assert client.api_base_url == "https://api.tavily.com"
+    assert client.search_kwargs["query"] == "central bank rate decision"
+    assert client.search_kwargs["max_results"] == 3
+    assert client.search_kwargs["include_domains"] == ["example.com"]
+    assert client.search_kwargs["include_answer"] is True
+
+
+@pytest.mark.anyio
+async def test_tavily_search_uses_tavily_client_for_tavily_endpoint(monkeypatch):
+    monkeypatch.setattr(search, "get_search_api_url", lambda: "https://api.tavily.com/search")
+    monkeypatch.setattr(search, "get_tavily_api_key", lambda: "test-key")
+    created: dict = {}
+    _patch_tavily(monkeypatch, created)
+
+    result = await search.tavily_search(query="rate decision", max_results=5, topic="news", days=3)
+
+    assert result["result_count"] == 1
+    client = created["client"]
+    assert client.api_key == "test-key"
+    assert client.api_base_url == "https://api.tavily.com"
+    assert client.search_kwargs["topic"] == "news"
+    assert client.search_kwargs["days"] == 3
 
 
 @pytest.mark.anyio

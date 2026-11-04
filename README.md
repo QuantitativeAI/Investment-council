@@ -25,6 +25,7 @@ Multi-expert investment council discussion system where multiple AI financial ex
 - **Web UI** — WeChat-style group chat interface with real-time WebSocket streaming (port 3088)
 - **CLI mode** — run meetings from the command line, suitable for automation and agent-to-agent interaction
 - **Web search** — optional Tavily search integration for background research before the meeting
+- **MCP tools** — connect MCP servers via .env so experts can call their tools during the meeting
 - **Post-meeting chat** — after the meeting ends, continue chatting with the Committee Chair about the results
 - **Custom markdown agents** — define your own council of experts as markdown files in `agents/`
 - **Language-agnostic meetings** — the council answers in whatever language you ask in (the UI is English)
@@ -58,7 +59,7 @@ Multi-expert investment council discussion system where multiple AI financial ex
    - `MODERATOR_LLM_*` — at least one Committee Chair LLM (API key, base URL, model)
    - `LLM_PROVIDER_1_*` — at least one expert LLM provider
    - `SEARCH_API_URL` — (optional) local Tavily-compatible news service for recent structured news
-   - `TAVILY_API_KEY` — (optional) open-web search for Eastmoney/Xueqiu/Sina/announcements/research
+   - `TAVILY_API_KEY` — (optional) open-web and news search via Tavily
    - `WEB_SEARCH_API_URL` — (optional) custom Tavily-compatible open-web search backend
 
    If `.env` is missing on first run, the CLI/server will exit with a clear error message.
@@ -106,6 +107,9 @@ Multi-expert investment council discussion system where multiple AI financial ex
 | `TAVILY_API_KEY` | Tavily API key for open-web search |
 | `WEB_SEARCH_API_URL` | Optional Tavily-compatible open-web search API URL |
 | `AGENTS_DIR` | Optional directory of markdown agent definitions (default: `./agents`) |
+| `MCP_SERVER_N_NAME` | Name for MCP server N (shown to experts) |
+| `MCP_SERVER_N_URL` | Streamable-HTTP URL of MCP server N (e.g. `http://127.0.0.1:8081/mcp`) |
+| `MCP_SERVER_N_API_KEY` | Optional bearer token for MCP server N |
 
 ### Custom Agents (Markdown)
 
@@ -128,6 +132,22 @@ You are the Head Portfolio Manager on the investment council...
 
 Markdown-defined agents keep their **fixed identities**: the Committee Chair introduces them by name and does not re-title them per topic. If the agents directory is missing or empty, the built-in generic experts are used instead. To use a different set, set `AGENTS_DIR` to any directory of markdown agent files.
 
+### MCP Servers
+
+Experts can call tools exposed by remote [MCP](https://modelcontextprotocol.io) servers. Configure one or more servers in `.env` with the `MCP_SERVER_N_*` scheme (numbered `1`, `2`, …); a server is active when its `_URL` is set:
+
+```env
+MCP_SERVER_1_NAME=financial_data
+MCP_SERVER_1_URL=http://127.0.0.1:8081/mcp
+MCP_SERVER_1_API_KEY=...        # optional
+```
+
+- Connections use the Streamable HTTP transport via the official `mcp` Python SDK.
+- Each meeting opens one connection per server, lists its tools, and closes them when the meeting ends.
+- A server's tools are added to the experts' prompts; an expert calls one by emitting a `tool_call` field, e.g. `{"server": "financial_data", "tool": "get_quote", "arguments": {"symbol": "AAPL"}}`.
+- MCP tools are independent of the "🔍 Web Search" toggle (which controls only the search backends and the Chair's pre-meeting research) and are available to experts only, not the Committee Chair.
+- A server that fails to connect is skipped with a warning and does not affect the meeting.
+
 ### Project Structure
 
 ```text
@@ -143,6 +163,7 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 ├── prompts.py              # Prompt templates
 ├── parser.py               # JSON/Markdown response parser
 ├── search.py               # Tavily search integration
+├── mcp_gateway.py          # MCP server client gateway
 ├── static/index.html       # Web UI
 ├── tests/                  # Minimal release smoke tests
 ├── .env.example            # Example configuration
@@ -172,6 +193,7 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 - **Web界面** — 微信风格群聊界面，WebSocket实时推送（端口3088）
 - **命令行模式** — 通过CLI运行会议，适合自动化和Agent间交互
 - **联网搜索** — 可选的Tavily搜索，会议前自动获取背景信息
+- **MCP工具** — 通过 .env 连接MCP服务器，专家可在会议中调用其工具
 - **会后对话** — 会议结束后可继续与委员会主席对话讨论结果
 - **自定义Markdown专家** — 在 `agents/` 目录中用markdown文件定义自己的专家团
 - **语言自适应** — 会议自动以用户提问的语言作答（界面为英文）
@@ -251,6 +273,9 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 | `SEARCH_API_URL` | Tavily兼容的搜索API地址（如本地新闻服务） |
 | `TAVILY_API_KEY` | Tavily搜索API密钥（免费注册: <https://tavily.com>） |
 | `AGENTS_DIR` | 可选的markdown专家定义目录（默认 `./agents`） |
+| `MCP_SERVER_N_NAME` | MCP服务器N的名称（展示给专家） |
+| `MCP_SERVER_N_URL` | MCP服务器N的Streamable-HTTP地址（如 `http://127.0.0.1:8081/mcp`） |
+| `MCP_SERVER_N_API_KEY` | 可选，MCP服务器N的bearer令牌 |
 
 ### 自定义专家（Markdown）
 
@@ -262,6 +287,22 @@ Markdown-defined agents keep their **fixed identities**: the Committee Chair int
 - 其他frontmatter字段（如opencode的 `mode`、`tools`、`steps`、`model`）会被忽略
 
 markdown定义的专家保持**固定身份**：委员会主席按其原名介绍，不会按议题重新命名。若 `agents/` 目录不存在或为空，则使用内置的通用专家。可通过 `AGENTS_DIR` 指向其他目录使用不同的专家组合。
+
+### MCP服务器
+
+专家可以调用远程 [MCP](https://modelcontextprotocol.io) 服务器暴露的工具。在 `.env` 中使用 `MCP_SERVER_N_*` 命名规则（编号 `1`、`2`、…）配置一个或多个服务器；当某个服务器的 `_URL` 被设置时即视为启用：
+
+```env
+MCP_SERVER_1_NAME=financial_data
+MCP_SERVER_1_URL=http://127.0.0.1:8081/mcp
+MCP_SERVER_1_API_KEY=...        # 可选
+```
+
+- 连接使用官方 `mcp` Python SDK 的 Streamable HTTP 传输。
+- 每次会议为每个服务器建立一次连接，列出其工具，会议结束后关闭。
+- 服务器的工具会加入专家的提示词；专家通过输出 `tool_call` 字段来调用，例如 `{"server": "financial_data", "tool": "get_quote", "arguments": {"symbol": "AAPL"}}`。
+- MCP工具独立于「🔍 联网搜索」开关（该开关仅控制搜索后端和主席的会前研究），且仅对专家可用，对委员会主席不可用。
+- 连接失败的服务器会被跳过并记录警告，不影响会议。
 
 ### 项目结构
 
@@ -278,6 +319,7 @@ markdown定义的专家保持**固定身份**：委员会主席按其原名介�
 ├── prompts.py              # Prompt模板
 ├── parser.py               # JSON/Markdown响应解析器
 ├── search.py               # Tavily搜索集成
+├── mcp_gateway.py          # MCP服务器客户端网关
 ├── static/index.html       # Web界面
 ├── tests/                  # 最小发布冒烟测试
 ├── .env.example            # 配置示例
