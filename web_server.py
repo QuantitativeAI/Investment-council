@@ -13,8 +13,8 @@ from config import MeetingConfig, load_config
 from models import MeetingInput
 from agents import ModeratorAgent
 from meeting_streaming import StreamingMeeting
-from i18n import LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
-from agent_defs import build_expert_agents
+from i18n import DEFAULT_EXPERTS, LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
+from agent_defs import build_expert_agents, get_agent_definitions
 from search import (
     build_research_prompt,
     fetch_webpage_content,
@@ -99,6 +99,21 @@ async def index():
     html_path = Path(__file__).parent / "static" / "index.html"
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
+
+@app.get("/api/agents")
+async def list_agents():
+    """Return the council roster (moderator + experts) for the UI."""
+    roster: list[dict[str, str]] = [
+        {"kind": "moderator", "name": MODERATOR_DISPLAY_NAME, "role": "Arbiter"},
+    ]
+    definitions = get_agent_definitions()
+    if definitions:
+        for d in definitions:
+            roster.append({"kind": "expert", "name": d.name, "role": d.description or d.name})
+    else:
+        for cfg in DEFAULT_EXPERTS:
+            roster.append({"kind": "expert", "name": cfg["name"], "role": cfg["role_label"]})
+    return roster
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
