@@ -95,6 +95,6 @@ def test_project_agents_directory_loads_council():
     definitions = load_agent_definitions(DEFAULT_AGENTS_DIR)
     assert len(definitions) == 4
     names = {d.name for d in definitions}
-    assert names == {"Portfolio Manager", "Earnings Reviewer", "Business Analyst", "Data Researcher"}
+    assert names == {"Tax Expert", "Quantitative Analyst", "Business Analyst", "Data Researcher"}
     for d in definitions:
         assert d.system_prompt.strip()
