@@ -216,7 +216,7 @@ button { font-family: inherit; }
   color:var(--ink-soft); font-size:12px; font-style:italic;
   padding:8px 12px;
 }
-/* PDF export */
+/* Report export */
 .report-head-actions { margin-left:auto; display:flex; align-items:center; gap:8px; }
 .btn-pdf {
   display:none; align-items:center; gap:6px;
@@ -228,11 +228,12 @@ button { font-family: inherit; }
 .btn-pdf:hover { filter:brightness(1.15); }
 .report-body h1, .report-body h2, .report-body h3 { page-break-after: avoid; }
 .report-body pre, .report-body table, .report-body blockquote { page-break-inside: avoid; }
+/* Must stay an in-flow block: html2pdf deep-clones this element into its own
+   hidden container, so positioned clones would escape it and collapse the
+   container height to zero, producing a blank PDF. */
 .pdf-clone {
-  position:fixed; left:-9999px; top:0;
-  width:794px; height:auto;
-  background:#fff; margin:0; padding:0;
-  overflow:visible; flex:none;
+  width:100%;
+  background:#fff;
   border:none; border-radius:0; box-shadow:none;
 }
 .pdf-doc-head { margin-bottom:16px; border-bottom:2px solid var(--gold-border); padding-bottom:10px; }
@@ -593,7 +594,8 @@ const T = {
   roundsWord: 'rounds',
   inProgress: 'in progress',
   pdfDocTitle: 'Final Investment Report',
-  pdfButtonTitle: 'Download the final report as a PDF',
+  pdfButtonTitle: 'Download the final report as PDF',
+  mdButtonTitle: 'Download the final report as Markdown',
   pdfError: 'Could not generate the PDF. Please try again.',
   openingLabel: 'Opening statement',
   summaryLabel: 'Round summary',
@@ -890,6 +892,7 @@ function renderChatView() {
                 <div class="report-sub">Prepared by the ${escapeHtml(MODERATOR_NAME)}</div>
               </div>
               <div class="report-head-actions">
+                <button class="btn-pdf${hasReport ? ' visible' : ''}" id="btnMd" onclick="downloadReportMarkdown()" title="${t('mdButtonTitle')}">⬇ MD</button>
                 <button class="btn-pdf${hasReport ? ' visible' : ''}" id="btnPdf" onclick="downloadReportPdf()" title="${t('pdfButtonTitle')}">⬇ PDF</button>
                 <span class="report-tag${hasReport ? '' : ' pending'}">${hasReport ? t('reportTag') : t('reportPending')}</span>
               </div>
@@ -1224,11 +1227,15 @@ function downloadReportPdf() {
     w.focus();
     return;
   }
+  // Keep the clone out of sight while html2pdf sets up its hidden container.
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;overflow:hidden;visibility:hidden;pointer-events:none';
   const clone = document.createElement('div');
   clone.className = 'report-body md pdf-clone';
   clone.innerHTML = contentHtml;
-  document.body.appendChild(clone);
-  const cleanup = () => { if (clone.parentNode) clone.parentNode.removeChild(clone); };
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+  const cleanup = () => { if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper); };
   html2pdf().set({
     margin: [12, 14, 14, 14],
     filename: fileName,
@@ -1237,6 +1244,26 @@ function downloadReportPdf() {
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     pagebreak: { mode: ['css', 'legacy'] }
   }).from(clone).save().then(cleanup).catch(() => { cleanup(); alert(t('pdfError')); });
+}
+
+function downloadReportMarkdown() {
+  const session = sessions[activeSessionId];
+  if (!session) return;
+  const report = session.messages.find(m => m.type === 'final_report');
+  if (!report) return;
+  const base = (session.title && session.title !== t('newSessionTitle')) ? session.title : 'investment-council';
+  const safe = base.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').substring(0, 60) || 'council-report';
+  const fileName = safe + '.md';
+  const text = `# ${session.title || 'Investment Council Report'}\n\n*Investment Council final report · ${new Date().toLocaleDateString()}*\n\n---\n\n${report.content}\n`;
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 // ============================================================
