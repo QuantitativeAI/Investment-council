@@ -8,7 +8,7 @@ Multi-expert investment council discussion system where multiple AI financial ex
 
 1. **User** submits a topic
 2. **Committee Chair** opens the meeting, states rules and objectives
-3. **Experts** (3-6 AI agents) independently present initial views (Round 1)
+3. **Experts** (4 by default, configurable via `agents/`) independently present initial views (Round 1)
 4. Experts challenge each other's points and introduce new ideas (Round 2)
 5. Experts defend, revise, and converge (Round 3)
 6. Optional Round 4 for unresolved key issues
@@ -16,11 +16,12 @@ Multi-expert investment council discussion system where multiple AI financial ex
 
 ### Features
 
-- **Multi-provider LLM support** — configure multiple OpenAI-compatible providers with weighted selection
+- **Multi-provider LLM support** — configure multiple OpenAI-compatible providers and pin each expert to a specific provider (`LLM_PROVIDER_N_EXPERT`), with weighted random selection as fallback
 - **Separate Chair LLM** — the Committee Chair can use a different model from the experts
-- **Web UI** — WeChat-style group chat interface with real-time WebSocket streaming (port 3088)
+- **Web UI** — council-room interface: Committee Chair panel, one panel per expert, and a final-report section with a live round-by-round digest; real-time WebSocket streaming (port 3088)
+- **Report export** — download the final report as a PDF or Markdown from the Web UI
 - **CLI mode** — run meetings from the command line, suitable for automation and agent-to-agent interaction
-- **Web search** — optional Tavily search integration for background research before the meeting
+- **Web search** — optional pre-meeting background research via Tavily, a local news API, or a custom Tavily-compatible backend
 - **MCP tools** — connect MCP servers via .env so experts can call their tools during the meeting
 - **Post-meeting chat** — after the meeting ends, continue chatting with the Committee Chair about the results
 - **Custom markdown agents** — define your own council of experts as markdown files in `agents/`
@@ -82,6 +83,7 @@ Multi-expert investment council discussion system where multiple AI financial ex
    python main.py "Topic" --goal "Find 3 actionable solutions" --background "context info"
    python main.py "Topic" --search  # Enable web search before meeting
    python main.py "Topic" --constraint "Budget under $10k" --constraint "Must use Python"
+   python main.py "Topic" --env /path/to/.env --no-chat  # custom config file, skip post-meeting chat
    ```
 
 ### Configuration (.env)
@@ -154,6 +156,8 @@ MCP_SERVER_1_API_KEY=...        # optional
 ├── web_server.py           # FastAPI web server (port 3088)
 ├── config.py               # .env configuration loader
 ├── agent_defs.py           # Markdown agent definition loader
+├── i18n.py                 # Display strings and built-in default experts
+├── skills/                 # Agent skills (web search)
 ├── agents/                 # Council agent definitions (markdown, one per expert)
 ├── models.py               # Data structures
 ├── agents.py               # Expert and Moderator agent classes
@@ -161,7 +165,7 @@ MCP_SERVER_1_API_KEY=...        # optional
 ├── meeting_streaming.py    # Streaming meeting orchestrator (WebSocket)
 ├── prompts.py              # Prompt templates
 ├── parser.py               # JSON/Markdown response parser
-├── search.py               # Tavily search integration
+├── search.py               # Tavily / local news / custom backend search integration
 ├── mcp_gateway.py          # MCP server client gateway
 ├── static/index.html       # Web UI
 ├── tests/                  # Minimal release smoke tests
