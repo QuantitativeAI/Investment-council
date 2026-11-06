@@ -3,6 +3,9 @@
 Reads LLM provider configs from .env file:
 - MODERATOR_LLM_* for the moderator's dedicated LLM
 - LLM_PROVIDER_N_* for expert LLM providers (weighted selection)
+- LLM_PROVIDER_N_EXPERT (optional) pins provider N to a specific expert by
+  agents/ file name; experts without an assignment fall back to the
+  weighted selection
 """
 
 import os
@@ -26,6 +29,7 @@ class LLMProviderConfig:
     model: str
     weight: int = 1
     timeout: int = 300
+    expert_file: str = ""
 
 
 @dataclass
@@ -58,7 +62,17 @@ def _load_provider(prefix: str) -> Optional[LLMProviderConfig]:
         model=os.environ.get(f"{prefix}_MODEL", ""),
         weight=int(os.environ.get(f"{prefix}_WEIGHT", "1")),
         timeout=int(os.environ.get(f"{prefix}_TIMEOUT", "300")),
+        # Stripping quotes makes the value robust when set outside python-dotenv.
+        expert_file=os.environ.get(f"{prefix}_EXPERT", "").strip().strip('"').strip("'"),
     )
+
+
+def normalize_expert_filename(value: str) -> str:
+    """Normalize an LLM_PROVIDER_N_EXPERT value to an agents/ file name."""
+    value = value.strip()
+    if value and not value.endswith(".md"):
+        value += ".md"
+    return value
 
 
 def load_config(env_path: Optional[str] = None) -> MeetingConfig:
@@ -113,6 +127,21 @@ def load_config(env_path: Optional[str] = None) -> MeetingConfig:
             "Expert provider %d: %s (%s) weight=%d",
             i, provider.name, provider.model, provider.weight,
         )
+
+    # Validate expert assignments: each expert file may be assigned to at most
+    # one provider slot.
+    assigned: dict[str, int] = {}
+    for i, provider in enumerate(expert_providers, start=1):
+        if not provider.expert_file:
+            continue
+        filename = normalize_expert_filename(provider.expert_file)
+        if filename in assigned:
+            raise ValueError(
+                f"Expert '{filename}' is assigned to both LLM_PROVIDER_{assigned[filename]} "
+                f"and LLM_PROVIDER_{i}; each expert may be assigned to at most one provider"
+            )
+        assigned[filename] = i
+        logger.info("Expert assignment: %s -> provider %d (%s)", filename, i, provider.model)
 
     if not expert_providers:
         raise ValueError(

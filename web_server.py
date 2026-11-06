@@ -14,7 +14,7 @@ from models import MeetingInput
 from agents import ModeratorAgent
 from meeting_streaming import StreamingMeeting
 from i18n import DEFAULT_EXPERTS, LANG_FOLLOW_INSTRUCTION, MODERATOR_DISPLAY_NAME
-from agent_defs import build_expert_agents, get_agent_definitions
+from agent_defs import active_definitions, build_expert_agents, get_agent_definitions
 from search import (
     build_research_prompt,
     fetch_webpage_content,
@@ -51,6 +51,12 @@ _meeting_histories: dict[str, str] = {}
 def _validate_startup_configuration(target_app: FastAPI) -> MeetingConfig:
     """Validate app configuration and cache it on the FastAPI app state."""
     config = load_config()
+
+    # Fail fast if LLM_PROVIDER_N_EXPERT assignments reference missing agents.
+    definitions = get_agent_definitions()
+    if definitions:
+        active_definitions(definitions, config)
+
     target_app.state.meeting_config = config
 
     if getattr(target_app.state, "config_validated", False):
@@ -106,9 +112,10 @@ async def list_agents():
     roster: list[dict[str, str]] = [
         {"kind": "moderator", "name": MODERATOR_DISPLAY_NAME, "role": "Arbiter"},
     ]
+    config = _get_runtime_config()
     definitions = get_agent_definitions()
     if definitions:
-        for d in definitions:
+        for d in active_definitions(definitions, config):
             roster.append({"kind": "expert", "name": d.name, "role": d.description or d.name})
     else:
         for cfg in DEFAULT_EXPERTS:
