@@ -98,6 +98,7 @@ Multi-expert investment council discussion system where multiple AI financial ex
 | `LLM_PROVIDER_N_API_KEY` | Expert provider N API key |
 | `LLM_PROVIDER_N_MODEL` | Expert provider N model |
 | `LLM_PROVIDER_N_WEIGHT` | Selection weight (higher = more likely, default: 1) |
+| `LLM_PROVIDER_N_EXPERT` | Pin provider N to an expert by agents/ file name, e.g. `tax_expert.md` (optional) |
 | `LLM_PROVIDER_N_TIMEOUT` | Request timeout in seconds (default: 300) |
 | `SEARCH_API_URL` | Tavily-compatible local news API URL |
 | `TAVILY_API_KEY` | Tavily API key for open-web search |
@@ -125,6 +126,8 @@ You are a tax specialist on the investment council...
 - `description` — shown to the Committee Chair in the opening so it knows each expert's remit
 - `temperature` — per-agent sampling temperature (optional)
 - Other frontmatter fields (e.g. opencode's `mode`, `tools`, `steps`, `model`) are ignored
+
+Experts can be pinned to specific LLM providers in `.env` with `LLM_PROVIDER_N_EXPERT=<agent file>.md` (each expert may be assigned to at most one provider). When at least one provider has an assignment, **only assigned experts join the meeting** — the roster tracks your configured models; with no assignments at all, every expert in the directory joins and is picked by weighted random selection from all providers. Assigning a file that does not exist in `agents/` is a configuration error (the server refuses to start).
 
 Markdown-defined agents keep their **fixed identities**: the Committee Chair introduces them by name and does not re-title them per topic. If the agents directory is missing or empty, the built-in generic experts are used instead. To use a different set, set `AGENTS_DIR` to any directory of markdown agent files.
 

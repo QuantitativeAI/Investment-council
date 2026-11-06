@@ -11,6 +11,9 @@ Recognized frontmatter fields:
 
 Other frontmatter fields (e.g. opencode's mode/tools/steps/model) are ignored.
 
+LLM provider assignment is not part of the frontmatter: it is configured in
+.env via LLM_PROVIDER_N_EXPERT (see config.py).
+
 The directory is taken from the AGENTS_DIR environment variable and defaults
 to the `agents/` directory next to this file. If it does not exist or contains
 no valid .md files, the built-in default experts are used instead.
@@ -23,6 +26,8 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+
+from config import normalize_expert_filename
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +122,51 @@ def get_agent_definitions(refresh: bool = False) -> list[AgentDefinition]:
     return _cached_definitions
 
 
+def active_definitions(definitions: list[AgentDefinition], config) -> list[AgentDefinition]:
+    """Restrict the roster to experts assigned in .env, when any assignment exists.
+
+    With no LLM_PROVIDER_N_EXPERT lines, every loaded expert joins the meeting
+    (weighted random model selection). With at least one, only assigned
+    experts join — so the roster tracks the configured models.
+    Raises ValueError when assignments reference files that are not in the
+    agents directory, so misconfiguration fails loudly instead of silently
+    shrinking the council.
+    """
+    assigned = {
+        normalize_expert_filename(p.expert_file)
+        for p in config.expert_providers
+        if p.expert_file
+    }
+    if not assigned:
+        return definitions
+    active = [
+        d for d in definitions
+        if d.source is not None and d.source.name in assigned
+    ]
+    if not active:
+        available = sorted(d.source.name for d in definitions if d.source is not None)
+        raise ValueError(
+            "No active experts: assigned expert file(s) "
+            f"{', '.join(sorted(assigned))} do not match any file in the agents "
+            f"directory (available: {', '.join(available) or 'none'})"
+        )
+    return active
+
+
+def _select_provider_for(config, definition: AgentDefinition):
+    """Pick the LLM provider for a markdown-defined expert.
+
+    A provider slot pinned to this expert's file name via LLM_PROVIDER_N_EXPERT
+    in .env wins; otherwise fall back to the weighted random selection.
+    """
+    if definition.source is not None:
+        filename = definition.source.name
+        for provider in config.expert_providers:
+            if provider.expert_file and normalize_expert_filename(provider.expert_file) == filename:
+                return provider
+    return config.select_expert_provider()
+
+
 def build_expert_agents(config) -> list:
     """Build ExpertAgent instances for a meeting.
 
@@ -128,11 +178,12 @@ def build_expert_agents(config) -> list:
 
     definitions = get_agent_definitions()
     if definitions:
+        definitions = active_definitions(definitions, config)
         return [
             ExpertAgent(
                 name=d.name,
                 role_label=d.description or d.name,
-                provider=config.select_expert_provider(),
+                provider=_select_provider_for(config, d),
                 system_prompt=d.system_prompt,
                 temperature=d.temperature,
                 allow_retitle=False,
