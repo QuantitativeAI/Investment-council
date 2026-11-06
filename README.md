@@ -109,15 +109,15 @@ Multi-expert investment council discussion system where multiple AI financial ex
 
 ### Custom Agents (Markdown)
 
-The default council (Portfolio Manager, Earnings Reviewer, Business Analyst, Data Researcher) is defined as markdown files in the `agents/` directory — one file per agent. Each file has YAML frontmatter plus a markdown body that becomes the agent's full system prompt:
+The default council (Tax Expert, Quantitative Analyst, Business Analyst, Data Researcher) is defined as markdown files in the `agents/` directory — one file per agent. Each file has YAML frontmatter plus a markdown body that becomes the agent's full system prompt:
 
 ```markdown
 ---
-name: Portfolio Manager
+name: Tax Expert
 description: One-line role description shown to the Committee Chair
 temperature: 0.45          # optional, default 0.7
 ---
-You are the Head Portfolio Manager on the investment council...
+You are a tax specialist on the investment council...
 (full persona — constraints, workflow, output expectations)
 ```
 
